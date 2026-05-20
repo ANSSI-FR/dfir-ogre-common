@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Regexp" file_encoding="UTF_8">
+  <mapping data_type="ngen">
+    <description>Parse data from ngen log</description>
+    <default_parser value="String" />
+    <default_date_pattern value='%m/%d/%Y %H:%M:%S.%3f' />
+    <!-- regexp specific parameters -->
+    <skip_lines value="1" />
+    <regexp_fail_policy value="Merge" />
+    <regex>
+      <![CDATA[^(?<timestamp>\d{1,2}\/\d{1,2}\/\d{4} \d{1,2}:\d{2}:\d{2}\.\d{3}) \[(?<process_id>\d+)\]:(?<message>.+)]]>
+    </regex>
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="Standard" />
+      <max_date_meaning value="0" />
+      <source_type value="file" />
+      <description>
+        <output_name value="process_id" />
+      </description>
+    </timeline>
+    <!-- field mapping that match the named regexp -->
+    <fields>
+      <field input="timestamp" parser="DateTime" qualifier="DATE_CREATION" />
+      <field input="process_id" parser="Int" qualifier="PROCESS_ID" />
+      <field input="message" parser="String" />
+    </fields>
+  </mapping>
+
+</plugin>

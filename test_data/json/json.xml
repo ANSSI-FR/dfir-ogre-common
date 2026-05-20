@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Json" file_encoding="UTF_8">
+  <mapping data_type="json_test">
+    <description>Parse windows evtx logs</description>
+    <default_parser value="String" />
+    <default_date_pattern value='iso' />
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="Standard" />
+      <max_date_meaning value="2" />
+      <source_type value="file" />
+      <related_user>
+        <output_name value="system.security.user_id" />
+      </related_user>
+      <description include_field_name="false" field_separator=":">
+        <output_name value="system.provider.provider_name" />
+        <output_name value="system.event_id" />
+      </description>
+    </timeline>
+
+    <fields>
+      <!-- System Section -->
+      <object input="system" output="system">
+        <object input="security">
+          <field input="user_id" parser="String" qualifier="USER_ID" />
+        </object>
+        <object input="time_created" output="time_created">
+          <field input="system_time" parser="DateTime"
+            display_name="System Time" qualifier="DATE_CREATION" />
+        </object>
+        <object input="provider" output="provider">
+          <field input="provider_name" parser="String" />
+          <field input="guid" parser="String" />
+        </object>
+
+        <field input="float_data" parser="Float" />
+        <field input="computer" parser="String" />
+        <field input="event_id" parser="String" />
+        <array>
+          <object input="object_array">
+            <field input="driver_name" parser="String" />
+          </object>
+        </array>
+      </object>
+      <array>
+        <field input="int_array" parser="Int" output="int_array" />
+      </array>
+    </fields>
+  </mapping>
+
+</plugin>

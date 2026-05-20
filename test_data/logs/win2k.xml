@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Regexp" file_encoding="UTF_8">
+  <mapping data_type="win2k">
+    <description>Parse data from win2k log</description>
+    <default_date_pattern value='%Y-%m-%d %H:%M:%S' />
+    <!-- regexp specific parameters -->
+    <skip_lines value="0" />
+    <regexp_fail_policy value="Merge" />
+    <regex>
+      <![CDATA[^(?<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\s+(?<level>\w+)\s+(?<component>\w+)\s+(?P<message>.+)]]>
+    </regex>
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="Standard" />
+      <max_date_meaning value="0" />
+      <source_type value="level" />
+      <description>
+        <output_name value="component" />
+      </description>
+    </timeline>
+    <!-- field mapping that match the named regexp -->
+    <fields>
+      <field input="timestamp" parser="DateTime" qualifier="DATE_CREATION" />
+      <field input="level" parser="String" />
+      <field input="component" parser="String" />
+      <field input="message" parser="String" />
+    </fields>
+  </mapping>
+
+</plugin>

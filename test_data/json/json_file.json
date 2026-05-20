@@ -1,0 +1,40 @@
+{
+    "system": {
+        "security": {
+            "user_id": "S-1-5-18"
+        },
+        "time_created": {
+            "system_time": "2016-04-26T21:30:13.520562+00:00"
+        },
+        "provider": {
+            "provider_name": "Microsoft-Windows-Kernel-PnP",
+            "guid": "9C205A39-1250-487D-ABD7-E831C6290539"
+        },
+        "event_id": 403,
+        "float_data": 1.32,
+        "computer": "MINWINPC",
+        "object_array": [
+            {
+                "driver_name": "hal.inf",
+                "device_updated": false
+            },
+            {
+                "driver_name": "hal2.inf",
+                "device_updated": true
+            }
+        ]
+    },
+    "int_array": [
+        5,
+        8,
+        12
+    ],
+    "unmapped": [
+        {
+            "val": "hal.inf"
+        },
+        {
+            "device_updated": true
+        }
+    ]
+}

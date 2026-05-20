@@ -1,0 +1,451 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Srum" file_encoding="UTF_8">
+  <mapping data_type="srum_app_timeline">
+    <description>Srum table that tracks statistics about inputs (focus, keyboard, mouse, etc.)
+      recieved by each application</description>
+    <category>Services and Applications</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+      <additional_description>
+        <output_name value="in_focus_s" />
+        <output_name value="duration_ms" />
+      </additional_description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="Flags" output="flags" parser="Int" />
+      <field input="InFocusS" output="in_focus_s" parser="Int" />
+      <field input="DurationMS" output="duration_ms" parser="Int" />
+      <field input="SpanMS" output="span_ms" parser="Int" />
+      <field input="UserInputS" output="user_input_s" parser="Int" />
+      <field input="KeyboardInputS" output="keyboard_input_s" parser="Int" />
+      <field input="MouseInputS" output="mouse_input_s" parser="Int" />
+      <field input="AudioInS" output="audio_in_s" parser="Int" />
+      <field input="AudioOutS" output="audio_out_s" parser="Int" />
+      <field input="DiskRaw" output="disk_raw" parser="Int" />
+      <field input="NetworkTailRaw" output="network_tail_raw" parser="Int" />
+      <field input="NetworkBytesRaw" output="network_bytes_raw" parser="Int" />
+
+      <field input="PSMForegroundS" output="pms_foreground_s" parser="Int" />
+      <field input="CompRenderedS" output="comp_rendered_s" parser="Int" />
+      <field input="CompDirtiedS" output="comp_dirtied_s" parser="Int" />
+      <field input="CompPropagatedS" output="comp_propagated_s" parser="Int" />
+      <field input="Cycles" output="cycles" parser="Int" />
+      <field input="CyclesBreakdown" output="cycles_breakdown" parser="Int" />
+      <field input="CyclesAttr" output="cycles_attr" parser="Int" />
+      <field input="CyclesAttrBreakdown" output="cycles_attr_breakdown" parser="Int" />
+      <field input="CyclesWOB" output="cycles_wob" parser="Int" />
+      <field input="CyclesWOBBreakdown" output="cycles_wob_breakdown" parser="Int" />
+      <field input="DiskRaw" output="disk_raw" parser="Int" />
+      <field input="NetworkTailRaw" output="network_tail_raw" parser="Int" />
+      <field input="NetworkBytesRaw" output="network_bytes_raw" parser="Int" />
+      <field input="MBBTailRaw" output="mbb_tail_raw" parser="Int" />
+      <field input="MBBBytesRaw" output="mbb_bytes_raw" parser="Int" />
+      <field input="DisplayRequiredS" output="display_required_s" parser="Int" />
+
+      <field input="EndTime" output="end_time" parser="Int" />
+      <field input="TimelineEnd" output="timeline_end" parser="Int" />
+      <field input="DisplayRequiredTimeline" output="display_required_timeline" parser="Int" />
+      <field input="KeyboardInputTimeline" output="keyboard_input_timeline" parser="Int" />
+      <field input="UserInputTimeline" output="user_input_timeline" parser="Int" />
+      <field input="CompRenderedTimeline" output="comp_rendered_timeline" parser="Int" />
+      <field input="CompDirtiedTimeline" output="comp_dirtied_timeline" parser="Int" />
+      <field input="CompPropagatedTimeline" output="comp_propagated_timeline" parser="Int" />
+      <field input="AudioInTimeline" output="audio_in_timeline" parser="Int" />
+      <field input="AudioOutTimeline" output="audio_out_timeline" parser="Int" />
+      <field input="CpuTimeline" output="cpu_timeline" parser="Int" />
+      <field input="DiskTimeline" output="disk_timeline" parser="Int" />
+      <field input="NetworkTimeline" output="network_timeline" parser="Int" />
+      <field input="MBBTimeline" output="mbb_timeline" parser="Int" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_application_resources">
+    <description>Srum table that tracks ressource usage for every exe that’s executed on the system
+      whether it still exists on disk or not. If it executed, it should be logged.
+    </description>
+    <category>Services and Applications</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+      <additional_description>
+        <output_name value="face_time" />
+      </additional_description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+
+      <field input="FaceTime" output="face_time" parser="Int" />
+
+      <field input="ForegroundCycleTime" output="foreground_cycle_time" parser="Int" />
+      <field input="BackgroundCycleTime" output="background_cycle_time" parser="Int" />
+
+      <field input="ForegroundContextSwitches" output="foreground_context_switches" parser="Int" />
+      <field input="BackgroundContextSwitches" output="background_context_switches" parser="Int" />
+
+      <field input="ForegroundBytesRead" output="foreground_bytes_read" parser="Int" />
+      <field input="BackgroundBytesRead" output="background_bytes_read" parser="Int" />
+
+      <field input="ForegroundBytesWritten" output="foreground_bytes_written" parser="Int" />
+      <field input="BackgroundBytesWritten" output="background_bytes_written" parser="Int" />
+
+      <field input="ForegroundNumReadOperations" output="foreground_num_read_operations"
+        parser="Int" />
+      <field input="BackgroundNumReadOperations" output="background_num_read_operations"
+        parser="Int" />
+
+      <field input="ForegroundNumWriteOperations" output="foreground_num_write_operations"
+        parser="Int" />
+      <field input="BackgroundNumWriteOperations" output="background_num_write_operations"
+        parser="Int" />
+
+      <field input="ForegroundNumberOfFlushes" output="foreground_number_of_flushes" parser="Int" />
+      <field input="BackgroundNumberOfFlushes" output="background_number_of_flushes" parser="Int" />
+
+    </fields>
+  </mapping>
+  <mapping data_type="srum_energy_estimation">
+    <description>Parse data from srum</description>
+    <category>Services and Applications</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="BinaryData" output="binary_data" parser="String" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_energy_usage">
+    <description>Srum table that tracks stores the per‑process estimates of how much electrical
+      energy Windows thinks each component has consumed over time.
+    </description>
+    <category>Windows Artefacts</category>
+    <category>Services and Applications</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="EventTimestamp" output="EventTimestamp" parser="Int" />
+      <field input="StateTransition" output="StateTransition" parser="Int" />
+      <field input="DesignedCapacity" output="DesignedCapacity" parser="Int" />
+      <field input="FullChargedCapacity" output="FullChargedCapacity" parser="Int" />
+      <field input="ChargeLevel" output="ChargeLevel" parser="Int" />
+      <field input="CycleCount" output="CycleCount" parser="Int" />
+      <field input="ConfigurationHash" output="ConfigurationHash" parser="Int" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_energy_usage_long_term">
+    <description>Srum table that tracks long term, per‑process estimates of how much electrical
+      energy Windows thinks each component has consumed over time.</description>
+    <category>Windows Artefacts</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="ActiveAcTime" output="active_ac_time" parser="Int" />
+      <field input="CsAcTime" output="cs_ac_time" parser="Int" />
+      <field input="ActiveDcTime" output="active_dc_time" parser="Int" />
+      <field input="CsDcTime" output="cs_dc_time" parser="Int" />
+      <field input="ActiveDischargeTime" output="active_discharge_time" parser="Int" />
+      <field input="CsDischargeTime" output="cs_discharge_time" parser="Int" />
+      <field input="ActiveEnergy" output="active_energy" parser="Int" />
+      <field input="CsEnergy" output="cs_energy" parser="Int" />
+      <field input="DesignedCapacity" output="designed_capacity" parser="Int" />
+      <field input="FullChargedCapacity" output="full_charged_capacity" parser="Int" />
+      <field input="CycleCount" output="cycle_count" parser="Int" />
+      <field input="ConfigurationHash" output="configuration_hash" parser="Int" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_network_connectivity_usage">
+    <description>Srum table that tracks network connection time statistics per interface</description>
+    <category>Network</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+        <output_name value="interface_luid" />
+      </description>
+      <additional_description>
+        <output_name value="connected_time" />
+      </additional_description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="InterfaceLuid" output="interface_luid" parser="Int" />
+      <field input="ConnectStartTime" output="connect_start_time" parser="DateTime" />
+      <field input="ConnectedTime" output="connected_time" parser="Int" />
+      <field input="L2ProfileId" output="l2_profile_id" parser="Int" />
+      <field input="L2ProfileFlags" output="l2_profile_flags" parser="Int" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_network_data_usage">
+    <description>SRUM table that tracks how much network traffic each installed app consumes</description>
+    <category>Network</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+      <additional_description>
+        <output_name value="bytes_sent" />
+        <output_name value="bytes_recvd" />
+      </additional_description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="InterfaceLuid" output="interface_luid" parser="Int" />
+      <field input="L2ProfileId" output="l2_profile_id" parser="Int" />
+      <field input="L2ProfileFlags" output="l2_profile_flags" parser="Int" />
+      <field input="BytesSent" output="bytes_sent" parser="Int" />
+      <field input="BytesRecvd" output="bytes_recvd" parser="Int" />
+    </fields>
+  </mapping>
+  <!-- sdp tables referenced here https://github.com/EricZimmerman/Srum/issues/15 -->
+  <mapping data_type="srum_sdp_volume">
+    <description>Srum table for windows server 2022 that tracks storage volumes information</description>
+    <category>File System</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="Total" output="total" parser="Int" />
+      <field input="Used" output="used" parser="Int" />
+
+    </fields>
+  </mapping>
+  <mapping data_type="srum_sdp_physical_disk">
+    <description>Srum table for windows server 2022 that tracks physical drive information</description>
+    <category>File System</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="SizeInBytes" output="size_in_bytes" parser="Int" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_sdp_cpu">
+    <description>Srum table for windows server 2022 that tracks cpu time</description>
+    <category>Services and Applications</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="ProcessorTime" output="processor_time" parser="Int" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_sdp_network">
+    <description>Srum table for windows server 2022 that tracks network activity</description>
+    <category>Network</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="BytesInBound" output="bytes_in_bound" parser="Int" />
+      <field input="BytesOutBound" output="bytes_out_bound" parser="Int" />
+      <field input="BytesTotal" output="bytes_total" parser="Int" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_tagged_energy">
+    <description>Parse data from Srum table ```{B6D82AF1-F780-4E17-8077-6CB9AD8A6FC4}```
+      (tagged_energy)</description>
+    <category>Windows Artefacts</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_vfuprov">
+    <description>Parse data from Srum table ```{7ACBBAA3-D029-4BE4-9A7A-0885927F1D8F}```
+      (vfuprov)</description>
+    <category>Windows Artefacts</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+    </fields>
+  </mapping>
+  <mapping data_type="srum_wpn_provider">
+    <description>Srum table that tracks telemetry that Windows collects about the Windows Push
+      Notification (WPN) service – i.e., the background “push‑notification” system that delivers
+      toast, badge, tile, and raw notifications to modern (UWP/Store) apps.</description>
+    <category>Windows Artefacts</category>
+    <default_date_pattern value='iso' />
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="user_id" />
+      </related_user>
+      <description>
+        <output_name value="app_id" />
+      </description>
+    </timeline>
+    <fields>
+      <field input="AutoIncId" output="incremental_id" parser="Int" />
+      <field input="TimeStamp" output="timestamp" parser="DateTime" />
+      <field input="AppId" output="app_id" parser="String" qualifier="APP_ID" />
+      <field input="UserId" output="user_id" parser="String" qualifier="USER_ID" />
+      <field input="NotificationType" output="notification_type" parser="Int" />
+      <field input="PayloadSize" output="payload_size" parser="Int" />
+      <field input="NetworkType" output="network_type" parser="Int" />
+    </fields>
+  </mapping>
+</plugin>

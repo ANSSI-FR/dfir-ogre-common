@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<library name="my library">
+    <book id="b1">
+        <title>Programming Rust</title>
+        <authors>
+            <author>Blandy Shannon</author>
+            <author>Doe John</author>
+        </authors>
+        <versions>
+            <version value="1" year="2017">first version</version>
+        </versions>
+        <description>
+            <short>Programming Lorem ipsum </short>
+            <summary>Programming Lorem ipsum dolor sit amet</summary>
+        </description>
+    </book>
+    <book id="b2">
+        <title>Rust in Action</title>
+        <authors>
+            <author>McNamara Tim</author>
+            <author>Doe Jeanne</author>
+        </authors>
+        <versions>
+            <version value="1" year="2021">first version</version>
+            <version value="2" year="2025">second version</version>
+        </versions>
+        <description>
+            <short>Lorem ipsum Action</short>
+            <summary>Action Lorem ipsum dolor sit amet</summary>
+        </description>
+    </book>
+</library>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="SQLite" file_encoding="UTF_8">
+  <mapping data_type="activity_cache">
+    <description>Parse data from windows activity cache</description>
+    <default_date_pattern value='timestamp' />
+    <default_parser value="String" />
+    <!-- sqlite specific parameters -->
+    <query>
+      <![CDATA[
+      select * from Activity order by StartTime
+      ]]>
+    </query>
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="level" />
+      <description include_field_name="true" field_separator=" - ">
+        <output_name value="app_id" />
+        <output_name value="group" />
+      </description>
+      <additional_description include_field_name="true" field_separator=" - ">
+        <output_name value="app_activity_id" />
+        <output_name value="payload" />
+      </additional_description>
+    </timeline>
+
+    <!-- field mapping that match the query result -->
+    <fields>
+      <field input="AppId" output="app_id" parser="String" />
+      <field input="AppActivityId" output="app_activity_id" parser="String" />
+      <field input="Group" output="group" parser="String" />
+      <field input="Tag" output="tag" parser="String" />
+      <field input="Payload" output="payload" parser="String" />
+      <field input="CreatedInCloud" output="created_in_cloud" parser="DateTime" />
+      <field input="StartTime" output="start_time" parser="DateTime" />
+      <field input="EndTime" output="end_time" parser="DateTime" />
+      <field input="LastModifiedOnClient" output="last_modified_on_client" parser="DateTime" />
+      <field input="OriginalLastModifiedOnClient" output="original_last_modified_on_client"
+        parser="DateTime" />
+    </fields>
+  </mapping>
+
+</plugin>

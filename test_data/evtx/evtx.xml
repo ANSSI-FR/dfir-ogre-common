@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<plugin parser="Evtx" file_encoding="UTF_8">
+  <mapping data_type="evtx">
+    <description>Parse windows evtx logs</description>
+    <default_parser value="String" />
+    <default_date_pattern value='iso' />
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="Standard" />
+      <max_date_meaning value="2" />
+      <source_type value="file" />
+      <related_user>
+        <output_name value="system.security.user_id" />
+      </related_user>
+      <description include_field_name="false" field_separator=":">
+        <output_name value="system.provider.provider_name" />
+        <output_name value="system.event_id" />
+      </description>
+      <additional_description>
+
+        <conditional>
+          <!-- condition value allows the or value with | -->
+          <condition path="system.event_id" value="403|410" parser="Int" />
+          <condition
+                        path="system.provider.provider_name"
+                        value="Microsoft-Windows-Kernel-PnP"
+                        parser="String"
+                    />
+          <output_name value="event_data.device_instance_id" />
+          <output_name value="event_data.driver_name" />
+        </conditional>
+
+        <conditional>
+          <condition path="system.event_id" value="1108" parser="Int" />
+          <condition
+                        path="system.provider.provider_name"
+                        value="Microsoft-Windows-Eventlog"
+                        parser="String"
+                    />
+          <output_name
+                        value="user_data.event_processing_failure.publisher_id"
+                    />
+          <output_name value="user_data.event_processing_failure.error_code" />
+          <output_name value="user_data.event_processing_failure.event_id" />
+        </conditional>
+
+         <conditional>
+          <condition path="system.event_id" value="4902" parser="Int" />
+          <condition
+                        path="system.provider.provider_name"
+                        value="Microsoft-Windows-Security-Auditing"
+                        parser="String"
+                    />
+          <output_name value="event_data.pua_policy_id" />
+        </conditional>
+
+        <conditional>
+          <condition path="system.event_id" value="456" parser="Int" />
+          <condition
+                        path="system.provider.provider_name"
+                        value="Service Control Manager"
+                        parser="String"
+                    />
+          <output_name value="event_data.param1" />
+          <output_name value="event_data.param2" />
+        </conditional>
+
+        <otherwise>
+          <output_name value="rendering_info" />
+          <output_name value="event_data" />
+          <output_name value="user_data" />
+          <output_name value="debug_data" />
+          <output_name value="processing_error_data" />
+        </otherwise>
+
+      </additional_description>
+    </timeline>
+
+    <fields>
+      <field
+                input="timestamp"
+                parser="DateTime"
+                display_name="Event generation time"
+                qualifier="DATE_CREATION"
+            />
+      <!-- System Section -->
+      <object input="System" output="system">
+        <object input="Security_attributes" output="security">
+          <field
+                        input="UserID"
+                        parser="String"
+                        output="user_id"
+                        qualifier="USER_ID"
+                    />
+        </object>
+        <object input="TimeCreated_attributes" output="time_created">
+          <field
+                        input="SystemTime"
+                        parser="DateTime"
+                        output="system_time"
+                        display_name="Event generation time"
+                        qualifier="DATE_CREATION"
+                    />
+        </object>
+        <object input="Provider_attributes" output="provider">
+          <field input="Name" parser="String" output="provider_name" />
+          <field input="Guid" parser="String" output="guid" />
+        </object>
+        <object input="Execution_attributes" output="execution">
+          <field input="ProcessID" parser="String" output="process_id" />
+          <field input="ThreadID" parser="String" output="thread_id" />
+        </object>
+        <field input="EventRecordID" parser="String" output="event_record_id" />
+        <field input="Computer" parser="String" output="computer" />
+        <field input="EventID" parser="String" output="event_id" />
+      </object>
+      <!-- Event Data Section -->
+      <object input="EventData" output="event_data" />
+      <!-- User Data Section -->
+      <object input="UserData" output="user_data" />
+      <!-- Debug Data Data Section -->
+      <object input="DebugData" output="debug_data" />
+      <!-- Binary Event Data Section -->
+      <object input="BinaryEventData" output="binary_event_data" />
+      <!-- Binary Event Data Section -->
+      <object input="ProcessingErrorData" output="processing_error_data" />
+      <!-- Binary Event Data Section -->
+      <object input="RenderingInfo" output="rendering_info" />
+    </fields>
+  </mapping>
+
+</plugin>

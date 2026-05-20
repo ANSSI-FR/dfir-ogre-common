@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Jsonl">
+    <mapping data_type="web_history">
+        <default_parser value="Ignore" />
+        <default_date_pattern value='iso' />
+
+        <fields>
+            <field input="url" parser="String" />
+            <field input="title" parser="String" />
+            <field input="title" parser="String" />
+            <field input="visit_date" parser="DateTime" />
+            <field input="visit_count" parser="Int" />
+            <field input="hidden" parser="Int" />
+        </fields>
+    </mapping>
+</plugin>

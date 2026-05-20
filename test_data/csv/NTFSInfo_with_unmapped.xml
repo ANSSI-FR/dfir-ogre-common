@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Csv" file_encoding="UTF_8">
+  <mapping data_type="ntfs_info">
+    <description>Parse data the NTFS Info csv file</description>
+    <csv_delimiter value="," />
+    <default_parser value="String" />
+    <default_date_pattern value='%Y-%m-%d %H:%M:%S.%3f' />
+    <csv_delimiter value="," />
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="MacbMacb" />
+      <max_date_meaning value="0" />
+      <source_type value="file" />
+      <description>
+        <output_name value="file_path" />
+      </description>
+      <additional_description include_field_name="true" field_separator=" - ">
+        <output_name value="size_in_bytes" />
+      </additional_description>
+    </timeline>
+
+    <fields>
+      <field input="SnapshotID" output="snapshot_id" parser="String" />
+      <multi_input output="file_path" qualifier="FILE_PATH" parser="Join" separator="\"
+        avoid_separator_duplication="true">
+        <field input="ParentName" parser="String" />
+        <field input="File" parser="String" />
+      </multi_input>
+      <field input="ParentName" output="parent" parser="String" />
+      <field input="File" output="file_name" parser="String" />
+      <field input="Extension" output="extension" parser="String" />
+      <field input="RecordInUse" output="file_in_use" parser="Bool" />
+      <field input="USN" output="usn_number" parser="IntRadix" radix="16" qualifier="FS_USN" />
+      <field input="FilenameFlags" output="file_name_flags" parser="Int" />
+      <!-- date fields -->
+      <field input="FileNameCreationDate" output="fn_creation_date" parser="DateTime"
+        qualifier="DATE_CREATION" />
+      <field input="FileNameLastModificationDate" output="fn_lastmod_date" parser="DateTime"
+        qualifier="DATE_MODIFICATION" />
+      <field input="FileNameLastAccessDate" output="fn_lastaccess_date" parser="DateTime"
+        qualifier="DATE_ACCESS" />
+      <field input="FileNameLastAttrModificationDate" output="fn_lastchange_date" parser="DateTime"
+        qualifier="DATE_CHANGE" />
+      <field input="CreationDate" output="si_creation_date" parser="DateTime"
+        qualifier="DATE_CREATION" />
+      <field input="LastModificationDate" output="si_lastmod_date" parser="DateTime"
+        qualifier="DATE_MODIFICATION" />
+      <field input="LastAccessDate" output="si_lastaccess_date" parser="DateTime"
+        qualifier="DATE_ACCESS" />
+      <field input="LastAttrChangeDate" output="si_lastchange_date" parser="DateTime"
+        qualifier="DATE_MODIFICATION" />
+
+
+    </fields>
+  </mapping>
+
+</plugin>

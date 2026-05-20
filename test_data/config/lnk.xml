@@ -1,0 +1,578 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Lnk" file_encoding="UTF_8">
+  <mapping data_type="win_lnk">
+    <description>
+      Windows Lnk parser
+    </description>
+    <default_parser value="Ignore" />
+    <default_date_pattern value='iso' />
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="Standard" />
+      <source_type value="file" />
+      <description>
+        <output_name value="link_info.path" />
+      </description>
+      <additional_description>
+        <output_name value="header.file_size" />
+        <output_name value="header.windowstyle" />
+        <output_name value="header.link_flags" />
+      </additional_description>
+    </timeline>
+
+    <!-- Fields -->
+    <fields>
+      <field input="file_creation_date" parser="DateTime" qualifier="DATE_CREATION"
+        description="file creation date" />
+      <field input="file_modif_date" parser="DateTime" qualifier="DATE_MODIFICATION"
+        description="file modification date" />
+      <field input="type" parser="String" />
+      <field input="status" parser="String" />
+      <field input="size" parser="Int" />
+      <field input="modification_time" parser="DateTime" />
+
+      <!-- Header -->
+      <object input="header">
+        <field input="header_size" parser="Ignore"
+          description="Size in bytes of this structure. This value MUST be 0x0000004C" />
+        <field input="r_link_flags" parser="Ignore" description="Raw value of link_flags?" />
+        <field input="r_file_flags" parser="Ignore" description="Raw value of file_flags?" />
+        <field input="r_hotkey" parser="Ignore" description="Raw value of hotkey?" />
+        <field input="guid" parser="StringToLower"
+          description="LinkCLSID: class identifier (CLSID). This value MUST be {00021401-0000-0000-C000-000000000046}" />
+
+        <array>
+          <field input="link_flags" parser="String"
+            description="LinkFlags: specifies information about the shell link and the presence of optional portions of the structure" />
+        </array>
+
+        <array>
+          <field input="file_flags" parser="String"
+            description="FileAttributes: specifies information about the link target." />
+        </array>
+
+        <field input="creation_time" parser="DateTime" qualifier="DATE_CREATION"
+          display_name="Creation time"
+          description="Specifies the creation time of the link target in UTC (Coordinated Universal Time). If the value is zero, there is no creation time set on the link target." />
+
+        <field input="access_time" parser="DateTime" qualifier="DATE_ACCESS"
+          display_name="Access time"
+          description="Specifies the access time of the link target in UTC (Coordinated Universal Time). If the value is zero, there is no access time set on the link target." />
+
+        <field input="modification_time" parser="DateTime" qualifier="DATE_MODIFICATION"
+          display_name="Modification time"
+          description="Specifies the write time of the link target in UTC (Coordinated Universal Time). If the value is zero, there is no write time set on the link target." />
+
+        <field input="size" output="file_size" parser="Int" qualifier="FILE_SIZE"
+          description="Specifies the size, in bytes, of the link target. If the link target file is larger than 0xFFFFFFFF, this value specifies the least significant 32 bits of the link target file size." />
+
+        <!-- Specifies the index of an icon within a given icon location -->
+        <field input="icon_index" parser="Int"
+          description="Specifies the index of an icon within a given icon location" />
+
+        <!-- 
+          ShowCommand: specifies the expected window state of an application launched by the link.
+          This value SHOULD be one of the following:
+          - SW_SHOWNORMAL: The application is open and its window is open in a normal fashion
+          - SW_SHOWMAXIMIZED: The application is open, and keyboard focus is given to the application, but
+              its window is not shown
+          - SW_SHOWMINNOACTIVE: The application is open, but its window is not shown. It is not given the
+              keyboard focus
+          All other values MUST be treated as SW_SHOWNORMAL
+        -->
+        <field input="windowstyle" parser="String"
+          description="ShowCommand: specifies the expected window state of an application launched by the link." />
+
+        <field input="hotkey" parser="String"
+          description="Specifies the keystrokes used to launch the application referenced by the shortcut key. This value is assigned to the application after it is launched, so that pressing the key activates that application." />
+
+        <field input="reserved0" parser="Int" description="A value that MUST be zero" />
+        <field input="reserved1" parser="Int" description="A value that MUST be zero" />
+        <field input="reserved2" parser="Int" description="A value that MUST be zero" />
+      </object>
+
+      <!-- data -->
+      <object input="data">
+        <!-- Ignore ? -->
+        <field input="size" parser="Int" description="" />
+
+        <field input="description" parser="String"
+          description="NAME_STRING specifies a description of the shortcut that is displayed to end users to identify the purpose of the shell link." />
+
+        <field input="relative_path" parser="String" qualifier="FILE_PATH"
+          description="RELATIVE_PATH specifies the location of the link target relative to the file that contains the shell link. When specified, this string SHOULD be used when resolving the link."
+        />
+
+        <field input="working_directory" parser="String" qualifier="FILE_PATH"
+          description="WORKING_DIR specifies the file system path of the working directory to be used when activating the link target."
+        />
+
+        <field input="command_line_arguments" parser="String"
+          description="COMMAND_LINE_ARGUMENTS stores the command-line arguments that are specified when activating the link target."
+        />
+
+        <field input="icon_location" parser="String" qualifier="FILE_PATH"
+          description="ICON_LOCATION specifies the location of the icon to be used when displaying a shell link item in an icon view."
+        />
+
+        <field input="string_encoding" parser="Ignore" />
+        <!-- Doc MS: CountCharacters (2 bytes): A 16-bit, unsigned integer that specifies either the
+          number of characters, defined by the system default code page, or the number of Unicode
+          characters found in the String field -->
+        <!-- Doc MS: String (variable): An optional set of characters, defined by the system default
+          code page, or a Unicode string with a length specified by the CountCharacters field -->
+      </object>
+
+      <!-- extra -->
+      <object input="extra">
+        <field input="console_codepage" parser="Int"
+          description="Unsigned integer that specifies a code page language code identifier." />
+
+
+        <!-- icon_location -->
+        <object input="ICON_LOCATION_BLOCK" output="icon_location"
+          description="Specifies the path to an icon. The path is encoded using environment variables, which makes it possible to find the icon across machines where the locations vary but are expressed using environment variables."
+        >
+          <!-- rg: what does this correspond to? Ignore? -->
+          <field input="size" parser="Int" />
+
+          <field input="target_ansi" parser="String"
+            description="Defined by the system default code page, which specifies a path to environment variable information." />
+
+          <field input="target_unicode" parser="String"
+            description="Unicode string that specifies a path to environment variable information." />
+        </object>
+
+        <!-- environmental_variables_location -->
+        <object input="ENVIRONMENTAL_VARIABLES_LOCATION_BLOCK"
+          output="environmental_variables_location"
+          description="Specifies a path to environment variable information when the link target refers to a location that has a corresponding environment variable."
+        >
+          <!-- rg: what does this correspond to? Ignore? -->
+          <field input="size" parser="Int" />
+
+          <field input="target_ansi" parser="String"
+            description="Defined by the system default code page, which specifies a path to environment variable information." />
+
+          <field input="target_unicode" parser="String"
+            description="Unicode string that specifies a path to environment variable information." />
+        </object>
+
+        <!-- darwin_properties -->
+        <object input="DARWIN_BLOCK"
+          output="darwin_properties"
+          description="Specifies an application identifier that can be used instead of a link target IDList to install an application when a shell link is activated.">
+
+          <field input="size" parser="Ignore" />
+
+          <field input="darwin_data_ansi" parser="String"
+            description="defined by the system default code page, which specifies an application identifier. This field SHOULD be ignored." />
+
+          <field input="darwin_data_unicode" parser="String"
+            description="Unicode string that specifies an application identifier." />
+
+          <!-- rg: Is this a GUID? Should we use StringToLower? 
+              as: an LLM said it is a GUID, id decided to trust it 
+          -->
+          <field input="product_code_id" parser="StringToLower"
+            description="Field created by the parser by interpreting the previous fields?" />
+
+          <field input="feature_name" parser="String"
+            description="Field created by the parser by interpreting the previous fields?" />
+
+          <field input="component_id" parser="String"
+            description="Field created by the parser by interpreting the previous fields?" />
+        </object>
+
+
+        <!-- special_folder_location -->
+        <object input="SPECIAL_FOLDER_LOCATION_BLOCK"
+          output="special_folder_location"
+          description="Specifies the location of a special folder. This data can be used when a link target is a special folder to keep track of the folder, so that the link target IDList can be translated when the link is loaded."
+        >
+          <field input="size" parser="Ignore"
+            description="BlockSize specifies the size of the SpecialFolderDataBlock structure. This value MUST be 0x00000010." />
+
+          <field input="offset" parser="Ignore"
+            description="Specifies the location of the ItemID of the first child segment of the IDList specified by SpecialFolderID." />
+
+          <field input="special_folder_id" parser="Int"
+            description="Unsigned integer that specifies the folder integer ID." />
+
+          <field input="special_folder_name" parser="String"
+            description="Translation of the special_folder_id value." />
+        </object>
+
+        <!-- known_folder_location -->
+        <object input="KNOWN_FOLDER_LOCATION_BLOCK"
+          output="known_folder_location"
+          description="Specifies the location of a known folder. This data can be used when a link target is a known folder to keep track of the folder so that the link target IDList can be translated when the link is loaded."
+        >
+          <field input="size" parser="Ignore"
+            description="BlockSize specifies the size of the KnownFolderDataBlock structure. This value MUST be 0x0000001C." />
+          <field input="offset" parser="Ignore"
+            description="Specifies the location of the ItemID of the first child segment of the IDList specified by KnownFolderID." />
+          <field input="known_folder_id" parser="StringToLower"
+            description="GUID packet representation that specifies the folder GUID ID." />
+        </object>
+
+        <!-- metadata_properties -->
+        <object input="METADATA_PROPERTIES_BLOCK"
+          output="metadata_properties"
+          description="PropertyStoreDataBlock specifies a set of properties that can be used by applications to store extra data in the shell link."
+        >
+          <!-- rg: Check if this field exists and likely ignore it if true -->
+          <field input="size" parser="Int" />
+          <array>
+
+            <!-- property_store -->
+            <object input="property_store" description="A serialized property storage structure">
+
+              <field input="storage_size" parser="Ignore"
+                description="Specifies the total size, in bytes, of this structure. It MUST be 0x00000000 if this is the last Serialized Property Storage in the enclosing Serialized Property Store."
+              />
+
+              <field input="version" parser="String"
+                description="Has to be equal to 0x53505331."
+              />
+
+              <field input="format_id" parser="String"
+                description="A GUID that specifies the semantics and expected usage of the properties contained in this Serialized Property Storage structure. It MUST be unique in the set of serialized property storage structures."
+              />
+
+              <!-- 
+                Doc MS: A sequence of one or more property values.
+                If the Format ID field is equal to the GUID {D5CDD505-2E9C-101B-9397-08002B2CF9AE}, then all values
+                          in the sequence MUST be Serialized Property Value (String Name) structures
+                otherwise, all values MUST be Serialized Property Value (Integer Name) structures.
+                The last Serialized Property Value in the sequence MUST specify 0x00000 for the Value Size.
+              -->
+              <array>
+                <object input="serialized_property_values">
+                  <!-- ok legacy (LnkPropertyValue) mais vérifier si c'est complet -->
+                  <field input="value_size" parser="Ignore" />
+                  <field input="value_type" parser="String" />
+                  <!-- value = types.Union(types.String(), types.Int()) -->
+                  <field input="value" parser="Dynamic">
+                    <parser value="DateTime" />
+                    <parser value="Int" />
+                    <parser value="Float" />
+                    <parser value="String" />
+                  </field>
+                  <field input="id" parser="Int" />
+                  <field input="name" parser="String" />
+                  <field input="name_size" parser="Int" />
+                </object>
+              </array>
+            </object>
+          </array>
+        </object>
+
+        <!-- shim_layer_properties -->
+        <object input="SHIM_LAYER_PROPERTIES"
+          output="shim_layer_properties"
+          description="Specifies the name of a shim that can be applied when activating a link target."
+        > <!--
+          # rg: Structure that might be present within the "extra" structure but doesn't seem to be
+          handled by jumplist-parser
+          A sample file containing this structure needs to be found
+          -->
+          <field input="name" parser="String"
+            description="LayerName: unicode string that specifies the name of a shim layer to apply to a link target when it is being activated"
+          />
+        </object>
+
+        <!-- distributed_link_tracker -->
+        <object input="DISTRIBUTED_LINK_TRACKER_BLOCK"
+          output="distributed_link_tracker"
+          description="Specifies data that can be used to resolve a link target if it is not found in its original location when the link is resolved. This data is passed to the Link Tracking service to find the link target."
+        >
+          <field input="size" parser="Ignore"
+            description="BlockSize specifies the size of the TrackerDataBlock structure. This value MUST be 0x00000060."
+          />
+          <field input="length" parser="Ignore"
+            description="Specifies the size of the rest of the TrackerDataBlock structure, including this Length field. This value MUST be 0x00000058."
+          />
+          <field input="version" parser="String"
+            description="This value MUST be 0x00000000."
+          />
+          <field input="machine_identifier" parser="String"
+            description="Specifies the NetBIOS name of the machine where the link target was last known to reside."
+          />
+          <field input="droid_volume_identifier" parser="StringToLower" qualifier="VOLUME_GUID"
+            description="Two values (a priori droid_volume_identifier and droid_file_identifier) in GUID packet representation that are used to find the link target with the Link Tracking service."
+          />
+          <field input="droid_file_identifier" parser="StringToLower"
+            description="Two values (a priori droid_volume_identifier and droid_file_identifier) in GUID packet representation that are used to find the link target with the Link Tracking service"
+          />
+
+
+          <!-- rg: Check origin of FRN -->
+          <field input="droid_file_mft_seq" parser="Int" />
+          <field input="droid_file_mft_seq" output="droid_file_frn" parser="IntToHex" width="16" />
+          <field input="droid_file_mft_seq" parser="Extension">
+            <field name="droid_file_sequence_number" parser="Int" />
+            <field name="droid_file_record_number" parser="Int" />
+          </field>
+
+          <field input="droid_file_frn_hex" parser="Int" />
+
+          <field input="droid_file_frn_split" parser="String" />
+          <field input="droid_file_timestamp" parser="DateTime"
+            description="Information générée par le parseur grace à la résolution de droid_volume_identifier et droid_file_identifier ?"
+          />
+          <field input="droid_file_mac" parser="String"
+            description="Information générée par le parseur grace à la résolution de droid_volume_identifier et droid_file_identifier ?"
+          />
+          <field input="droid_file_vendor" parser="String"
+            description="Information générée par le parseur grace à la résolution de droid_volume_identifier et droid_file_identifier ?"
+          />
+          <field input="birth_droid_volume_identifier" parser="StringToLower"
+            qualifier="VOLUME_GUID"
+            description="Two values (a priori birth_droid_volume_identifier et birth_droid_file_identifier) in GUID packet representation that are used to find the link target with the Link Tracking service."
+          />
+          <field input="birth_droid_file_identifier" parser="StringToLower"
+            description="Two values (a priori birth_droid_volume_identifier et birth_droid_file_identifier) in GUID packet representation that are used to find the link target with the Link Tracking service."
+          />
+
+
+          <!-- rg: Check origin of FRN -->
+          <field input="birth_droid_file_mft_seq" parser="Int" />
+
+          <field input="birth_droid_file_mft_seq" output="birth_droid_file_frn" parser="IntToHex"
+            width="16" />
+          <field input="birth_droid_file_mft_seq" parser="Extension">
+            <field name="birth_droid_file_sequence_number" parser="Int" />
+            <field name="birth_droid_file_record_number" parser="Int" />
+          </field>
+          <field input="birth_droid_file_timestamp" parser="DateTime"
+            description="Timestamp generated by the parser by resolving birth_droid_volume_identifier and birth_droid_file_identifier?"
+          />
+          <field input="birth_droid_file_mac" parser="String"
+            description="MAC address generated by the parser by resolving birth_droid_volume_identifier and birth_droid_file_identifier?"
+          />
+          <field input="birth_droid_file_vendor" parser="String"
+            description="Vendor information generated by the parser by resolving birth_droid_volume_identifier and birth_droid_file_identifier?"
+          />
+        </object>
+
+        <!-- shim_layer_properties -->
+        <object input="CONSOLE_PROPERTIES_BLOCK"
+          output="console_properties"
+          description="Specifies the display settings to use when a link target specifies an application that is run in a console window."
+        >
+          <field input="size" parser="Int" />
+          <!-- 
+          MS Doc: specifies the fill attributes that control the foreground and background
+          text colors in the console window
+          The following bit definitions can be combined to specify 16 different values each for the
+          foreground and background colors:
+          - FOREGROUND_BLUE (1): The foreground text color contains blue
+          - FOREGROUND_GREEN (2): The foreground text color contains green
+          - FOREGROUND_RED (4): The foreground text color contains red
+          - FOREGROUND_INTENSITY (8): The foreground text color is intensified
+          - BACKGROUND_BLUE (10): The background text color contains blue
+          - BACKGROUND_GREEN (20): The background text color contains green
+          - BACKGROUND_RED (40): The background text color contains red
+          - BACKGROUND_INTENSITY (80): The background text color is intensified
+          -->
+          <field input="fill_attributes" parser="Int"
+            description="Specifies the fill attributes that control the foreground and background text colors in the console window." />
+
+          <field input="popup_fill_attributes" parser="Int"
+            description="specifies the fill attributes that control the foreground and background text color in the console window popup. The values are the same as for the FillAttributes field." />
+
+          <field input="screen_buffer_size_x" parser="Int"
+            description="Specifies the horizontal size (X axis), in characters, of the console window buffer." />
+
+          <field input="screen_buffer_size_y" parser="Int"
+            description="Specifies the vertical size (Y axis), in characters, of the console window buffer." />
+
+          <field input="window_size_x" parser="Int"
+            description="Specifies the horizontal size (X axis), in characters, of the console window." />
+
+          <field input="window_size_y" parser="Int"
+            description="Specifies the vertical size (Y axis), in characters, of the console window." />
+
+          <field input="window_origin_x" parser="Int"
+            description="Specifies the horizontal coordinate (X axis), in pixels, of the console window origin." />
+
+          <field input="window_origin_y" parser="Int"
+            description="Specifies the vertical coordinate (Y axis), in pixels, of the console window origin." />
+
+          <field input="font_size" parser="Int"
+            description="Specifies the size, in pixels, of the font used in the console window." />
+
+          <field input="font_family" parser="Int"
+            description="Specifies the family of the font used in the console window. This value MUST be comprised of a font family and a font pitch. Voir le tableau de la doc pour interpréter." />
+
+          <field input="font_weight" parser="Int"
+            description="Specifies the stroke weight of the font used in the console window. lower than 700: regular, greater than 700: bold." />
+
+          <field input="face_name" parser="String"
+            description="Specifies the face name of the font used in the console window" />
+
+          <field input="cursor_size" parser="Int"
+            description="Specifies the size of the cursor, in pixels, used in the console window. lower than 25: small, 25-50: normal, 51-100: large." />
+
+          <field input="full_screen" parser="Int"
+            description="Specifies whether to open the console window in full-screen mode. 0: windows, other: fullscreen." />
+
+          <field input="quick_edit" parser="Int"
+            description="Specifies whether to open the console window in QuikEdit mode. In QuickEdit mode, the mouse can be used to cut, copy, and paste text in the console window. 0: off, other: on." />
+
+          <field input="insert_mode" parser="Int"
+            description="Specifies insert mode in the console window. 0: disabled, other: enabled." />
+
+          <field input="auto_position" parser="Int"
+            description="Specifies auto-position mode of the console window. 0: false, other: true ; if false, origin x and y are used." />
+
+          <field input="history_buffer_size" parser="Int"
+            description="Specifies the size, in characters, of the buffer that is used to store a history of user input into the console window." />
+
+          <field input="number_of_history_buffers" parser="Int"
+            description="Specifies the number of history buffers to use." />
+
+          <field input="history_no_dup" parser="Int"
+            description="Specifies whether to remove duplicates in the history buffer. 0: duplicates not allowed, other: duplicates allowed" />
+
+          <field input="color_table" parser="Int"
+            description="specifying the RGB colors that are used for text in the console window. The values of the fill attribute fields FillAttributes and PopupFillAttributes are used as indexes into this table to specify the final foreground and background color for a character." />
+        </object>
+
+        <!-- shell properties -->
+        <object input="SHELL_ITEM_IDENTIFIER_BLOCK"
+          output="shell_item_identifier"
+          description="The VistaAndAboveIDListDataBlock structure specifies an alternate IDList that can be used instead of the LinkTargetIDList structure on platforms that support it."
+        >
+          <array>
+            <object input="id_list" description="An IDList structure" />
+          </array>
+        </object>
+
+        <!-- terminal properties -->
+        <object input="TERMINAL_BLOCK"
+          output="terminal_properties"
+          description="A structure that indicates the end of the extra data section."
+        >
+          <field input="size" parser="Int" />
+          <field input="appended_data_sha256" parser="String" />
+          <field input="appended_data_base64" parser="String" />
+        </object>
+      </object>
+
+      <!-- target -->
+      <object input="target">
+        <field input="size" parser="Ignore" />
+        <field input="index" parser="Ignore" />
+
+        <!-- items (Doc MS: IDList): contains a list of ItemID and terminalID -->
+        <array>
+          <object input="items">
+            <array>
+              <field input="strings" parser="String"
+                description="Strings extracted from identifiers by the in-house parser" />
+            </array>
+
+            <object input="identifiers" description="" />
+
+            <field input="item_class" parser="String"
+              description="Common to every item types (RootFolder, VolumeItem, FileEntry, Internet, ControlPanel, UsersFilesFolder, Unknown). Indicates the type of element (Root Folder, Volume Item, File entry, etc...)." />
+
+            <field input="sort_index" parser="String"
+              description="For items type 'RootFolder', should contains the root of the link." />
+
+            <field input="guid" parser="String"
+              description="For items type 'RootFolder', should contains a ShellFolderID." />
+
+            <field input="class_type_indicator" parser="Int"
+              description="Raw form (int) of flags; verify and hide if correct" />
+
+            <field input="flags" parser="String"
+              description="For items type 'VolumeItem' and 'FileEntry', contains a flag, possibly as a string if interpreted by the parser (examples: Is directory, Is file) and an int/hex value otherwise." />
+
+            <field input="data" parser="String"
+              description="For items type 'VolumeItem', should contain the volume letter." />
+
+            <field input="file_size" parser="Int" output="size" qualifier="FILE_SIZE"
+              description="For items type 'FileEntry', contains the size of the target file (and probably 0 for a directory)." />
+
+            <field input="modification_time" parser="DateTime" qualifier="DATE_MODIFICATION"
+              description="For items type 'FileEntry', last modification date of the target file?" />
+
+            <field input="file_attribute_flags" parser="Int"
+              description="For items type 'FileEntry', target file attributes; interpreted?" />
+
+            <field input="primary_name" parser="String"
+              description="For items type 'FileEntry', name of a file or directory in the target path." />
+
+            <field input="item_identifier" parser="String"
+              description="For items type 'ControlPanel'" />
+
+            <field input="data_base64" parser="String"
+              description="Base64 content for Unknown item_class values." />
+
+            <field input="data_sha256" parser="String"
+              description="SHA-256 of the content for Unknown item_class values." />
+          </object>
+        </array>
+
+        <field input="target_path" parser="String" qualifier="FILE_PATH" />
+      </object>
+
+      <!-- link info -->
+      <object input="link_info">
+        <field input="local_base_path" parser="String" qualifier="FILE_PATH" />
+        <field input="common_path_suffix" parser="String" qualifier="FILE_PATH" />
+        <field input="location" parser="String" />
+        <!-- Champ ignorés (size, offsets, flags, etc.) -->
+        <field input="link_info_size" parser="Ignore" />
+        <field input="link_info_header_size" parser="Ignore" />
+        <field input="link_info_flags" parser="Ignore" />
+        <field input="volume_id_offset" parser="Ignore" />
+        <field input="local_base_path_offset" parser="Ignore" />
+        <field input="common_network_relative_link_offset" parser="Ignore" />
+        <field input="common_path_suffix_offset" parser="Ignore" />
+
+        <!-- location Info -->
+        <object input="location_info">
+
+          <field input="r_drive_type" parser="Int" description="" />
+
+          <!-- rg: translated in drive_type ; to be hidden? -->
+          <field input="drive_type" parser="String" description="" />
+
+          <field input="drive_serial_number" parser="String" description="" />
+          <field input="volume_label" parser="String" description="" />
+          <field input="volume_label_unicode" parser="String" description="" />
+          <field input="common_network_relative_link_flags" parser="String" description="" />
+          <field input="r_network_provider_type" parser="String" description="" />
+
+          <!-- rg: hex code translated into network_provider_type ; to be hidden? -->
+          <field input="network_provider_type" parser="String" description="" />
+
+          <field input="net_name" parser="String" description="" />
+          <field input="net_name_unicode" parser="String" description="" />
+          <field input="device_name" parser="String" description="" />
+          <field input="device_name_unicode" parser="String" description="" />
+
+          <!-- Ignored fields -->
+          <field input="volume_id_size" parser="Ignore" description="" />
+          <field input="volume_label_offset" parser="Ignore" description="" />
+          <field input="volume_label_unicode_offset" parser="Ignore" description="" />
+          <field input="common_network_relative_link_size" parser="Ignore" description="" />
+          <field input="net_name_offset" parser="Ignore" description="" />
+          <field input="device_name_offset" parser="Ignore" description="" />
+        </object>
+
+      </object>
+
+      <!-- slack -->
+      <object input="slack">
+        <field input="payload" parser="String" />
+      </object>
+    </fields>
+
+  </mapping>
+</plugin>

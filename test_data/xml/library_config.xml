@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<plugin parser="Xml" file_encoding="UTF_16_LE">
+  <mapping data_type="library">
+    <description>Parse data the Library xml file</description>
+    <default_parser value="Ignore" />
+    <default_date_pattern value='%Y%m%d-%H%M%S' />
+
+    <xpath_tuple value="/library/book" />
+    <fields>
+      <field input="../@name" output="library" parser="String" />
+      <field input="@id" output="id" parser="String" />
+      <field input="title" output="title" parser="String" />
+      <array>
+        <field input="authors/author" output="authors" parser="String" />
+      </array>
+      <array>
+        <object input="versions/version" output="versions">
+          <field input="@value" output="version" parser="String" />
+          <field input="@year" output="year" parser="String" />
+          <field input="." output="title" parser="String" />
+        </object>
+      </array>
+      <object input="description" output="description">
+        <field input="short" output="short" parser="String" />
+        <field input="summary" output="summary" parser="String" />
+      </object>
+    </fields>
+  </mapping>
+</plugin>

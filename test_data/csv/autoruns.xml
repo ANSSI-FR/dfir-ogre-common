@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Csv" file_encoding="UTF_16_LE">
+  <mapping data_type="autoruns">
+    <description>Parse data the NTFS Info csv file</description>
+    <csv_delimiter value="," />
+    <default_parser value="Ignore" />
+    <default_date_pattern value='%Y%m%d-%H%M%S' />
+    <csv_delimiter value="," />
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="Standard" />
+      <max_date_meaning value="0" />
+      <source_type value="file" />
+      <description>
+        <output_name value="entry" />
+      </description>
+      <additional_description include_field_name="true" field_separator=" - ">
+        <output_name value="image_path" />
+        <output_name value="enabled" />
+        <output_name value="category" />
+        <output_name value="profile" />
+      </additional_description>
+    </timeline>
+
+    <fields>
+      <field input="Time" output="time" parser="DateTime" />
+      <field input="Entry Location" output="entry_location" qualifier="KEY_PATH" parser="String" />
+      <field input="Entry" output="entry_name" parser="String" qualifier="KEY_NAME" />
+      <multi_input output="entry" parser="Join" separator="\"
+        avoid_separator_duplication="true" qualifier="KEY_PATH">
+        <field input="Entry Location" parser="String" />
+        <field input="Entry" parser="String" />
+      </multi_input>
+
+      <field input="Enabled" output="enabled" parser="Bool" />
+      <field input="Category" output="category" parser="String" />
+      <field input="Profile" output="profile" parser="String" />
+      <field input="Description" output="description" parser="String" />
+      <field input="Signer" output="signer" parser="String" />
+
+      <field input="Company" output="company" parser="String" qualifier="COMPANY" />
+      <field input="Image Path" output="image_path" qualifier="FILE_PATH" parser="String" />
+      <field input="Version" output="version" parser="String" qualifier="PE_VERSION" />
+      <field input="Launch String" output="launch_string" parser="String" />
+      <!-- hash -->
+      <field input="MD5" output="md5" parser="String" qualifier="FILE_MD5" />
+      <field input="SHA-1" output="sha1" parser="String" qualifier="FILE_SHA1" />
+      <field input="PESHA-1" output="pe_sha1" parser="String" qualifier="PE_SHA1" />
+      <field input="PESHA-256" output="pe_sha256" parser="String" qualifier="PE_SHA256" />
+      <field input="SHA-256" output="sha256" parser="String" qualifier="FILE_SHA256" />
+      <!-- others -->
+      <field input="IMP" output="imp" parser="String" />
+
+
+    </fields>
+  </mapping>
+
+</plugin>

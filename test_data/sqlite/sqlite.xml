@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="SQLite">
+  <mapping data_type="sqlite">
+    <description>Parse data from a random sql database</description>
+    <default_parser value="String" />
+    <default_date_pattern value="timestamp" />
+    <!-- sqlite specific parameters -->
+    <query>
+      <![CDATA[SELECT * FROM sqlite_master WHERE type='table']]>
+    </query>
+
+  </mapping>
+
+</plugin>

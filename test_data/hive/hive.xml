@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Hive" file_encoding="UTF_8">
+  <mapping data_type="hive">
+    <description>Parse data the NTFS Info csv file</description>
+
+    <default_parser value="Ignore" />
+    <default_date_pattern value='%Y-%m-%d %H:%M:%S.%3f' />
+    <include_values value="true" />
+    <truncate_values_after value="512" />
+
+    <!-- Timeline definition -->
+    <timeline>
+      <timeline_type value="Standard" />
+      <max_date_meaning value="0" />
+      <source_type value="file" />
+      <related_user include_field_name="false" field_separator=" - ">
+        <output_name value="descriptor.owner_sid" />
+      </related_user>
+      <description>
+        <output_name value="path" />
+      </description>
+    </timeline>
+
+    <fields>
+      <field input="name" parser="String" qualifier="KEY_NAME" />
+      <field input="path" parser="String" qualifier="KEY_PATH" />
+      <field input="mtime" parser="DateTime" qualifier="DATE_MODIFICATION" />
+      <!-- key value fields -->
+      <array>
+        <object input="values" ignore="false">
+          <field input="name" parser="String" qualifier="VALUE_NAME" />
+          <field input="data" parser="String" />
+          <field input="type" parser="String" />
+          <field input="size" parser="Int" />
+          <field input="error" parser="String" />
+        </object>
+      </array>
+      <!-- security descriptor fields -->
+      <object input="descriptor">
+        <field input="owner_sid" parser="String" qualifier="USER_SID" />
+        <field input="group_sid" parser="String" />
+        <array>
+          <field input="control_flags" parser="String" />
+        </array>
+        <object input="sacl_ace" ignore="false">
+          <field input="ace_type" parser="String" />
+          <field input="ace_flags" parser="String" />
+          <array>
+            <field input="rights" parser="String" />
+          </array>
+          <field input="account_sid" parser="String" />
+        </object>
+        <object input="dacl_ace" ignore="false">
+          <field input="ace_type" parser="String" />
+          <array>
+            <field input="ace_flags" parser="String" />
+          </array>
+          <array>
+            <field input="rights" parser="String" />
+          </array>
+          <field input="account_sid" parser="String" />
+        </object>
+      </object>
+
+    </fields>
+  </mapping>
+
+</plugin>
