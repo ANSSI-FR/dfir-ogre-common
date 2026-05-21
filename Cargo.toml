@@ -35,7 +35,7 @@ encoding_rs = { version = "0.8.35" }
 encoding_rs_io = { version = "0.1.7" }
 
 # parsing library
-dfir-nt-hive = {  git = "git+ssh://git@github.com/ANSSI-FR/dfir-nt-hive.git" }
+dfir-nt-hive = {  git = "https://github.com/ANSSI-FR/dfir-nt-hive.git" }
 csv = { version = "1.4.0" }
 libesedb = { version = "0.2.7" }
 evtx = { version = "0.11.1" }
