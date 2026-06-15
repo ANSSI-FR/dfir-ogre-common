@@ -1663,11 +1663,12 @@ mod tests {
 
         line_builder.build(&mut record).unwrap();
 
-        assert!(!line_builder.line_data.data.contains_key("details"));
+        assert!(line_builder.line_data.data.is_empty());
     }
 
     #[test]
     fn mapped_array_objects_preserve_renamed_and_unmapped_fields() {
+        let qualifiers = Qualifiers::new();
         let mapping = FieldMapping::new(
             vec![Field::Array(ArrayField::new(Field::Object {
                 name: FieldName::new("items".to_owned(), false, None, None, None, None),
@@ -1677,7 +1678,7 @@ mod tests {
                         "parsed_name".to_owned(),
                         false,
                         Some("item_name".to_owned()),
-                        None,
+                        Some(qualifiers.APP_ID),
                         None,
                         None,
                     ),
@@ -1691,7 +1692,7 @@ mod tests {
             Metadata::new("test".into()),
             None,
             mapping,
-            false,
+            true,
             false,
             false,
             true,
@@ -1713,7 +1714,7 @@ mod tests {
             value => panic!("expected first item object, got {value:?}"),
         };
         assert_eq!(
-            first.get("item_name"),
+            first.get("item_name:app_id"),
             Some(&Value::String("first".to_owned()))
         );
         assert_eq!(first.get("extra_field"), Some(&Value::Bool(true)));
@@ -1800,6 +1801,11 @@ mod tests {
             "unmapped_date"
         );
         assert!(line_builder.line_data.data.contains_key("unmapped_date"));
+        assert_eq!(line_builder.line_data.timeline[0].timestamp, date);
+        assert_eq!(
+            line_builder.line_data.data.get("unmapped_date"),
+            Some(&Value::Date(date))
+        );
     }
 
     fn primary_key_mapping() -> FieldMapping {
