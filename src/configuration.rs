@@ -68,9 +68,9 @@ impl PluginConfiguration {
         }
 
         if mappings.is_empty() {
-            return Err(Error::ConfigurationError(format!(
-                "plugin must have at least one DataTypeMapping"
-            )));
+            return Err(Error::ConfigurationError(
+                "plugin must have at least one DataTypeMapping".to_string(),
+            ));
         }
         Ok(Self {
             plugin,
@@ -170,7 +170,7 @@ fn parse_mapping(
     python: &HashMap<String, Py<PyAny>>,
     extension: &HashMap<String, ParserExtension>,
 ) -> Result<DataTypeMapping, Error> {
-    let data_type = attribute("data_type", &node)?;
+    let data_type = attribute("data_type", node)?;
 
     let mut config = DataTypeMapping {
         data_type,
@@ -199,7 +199,7 @@ fn parse_mapping(
                         if let Some(elem) = node.as_element() {
                             let field = parse_field_node(
                                 elem,
-                                &qualifiers,
+                                qualifiers,
                                 &config.default_date_pattern,
                                 python,
                                 extension,
@@ -406,7 +406,7 @@ fn parse_timeline_conditional_descr(
                         &HashMap::new(),
                     )?;
                     let value = parser
-                    .get_value(Some(&value_str))?
+                    .get_value(Some(value_str))?
                     .ok_or(Error::ConfigurationError(format!("No result while parsing condition expression value '{value_str}' for path:'{full_path}'. ")))?;
                     values.push(value);
                 }
@@ -447,14 +447,14 @@ fn parse_timeline_otherwise_descr(
     timeline_builder: &mut TimeLineBuilder,
 ) -> Result<(), Error> {
     for xml_node in &conditional_node.children {
-        if let Some(elem) = xml_node.as_element() {
-            if elem.name.eq("output_name") {
-                let path: Vec<String> = attribute("value", elem)?
-                    .split(".")
-                    .map(|s| s.to_string())
-                    .collect();
-                timeline_builder.add_otherwise_description_path(path);
-            }
+        if let Some(elem) = xml_node.as_element()
+            && elem.name.eq("output_name")
+        {
+            let path: Vec<String> = attribute("value", elem)?
+                .split(".")
+                .map(|s| s.to_string())
+                .collect();
+            timeline_builder.add_otherwise_description_path(path);
         }
     }
     Ok(())
@@ -501,12 +501,10 @@ fn parse_field_node(
             extension,
             contains_primary_key,
         ),
-        _ => {
-            return Err(Error::ConfigurationError(format!(
-                "field can be either  'field', 'array', 'multi_input', or 'object'. Found: '{}'",
-                elem.name
-            )));
-        }
+        _ => Err(Error::ConfigurationError(format!(
+            "field can be either  'field', 'array', 'multi_input', or 'object'. Found: '{}'",
+            elem.name
+        ))),
     }
 }
 
@@ -527,7 +525,7 @@ fn parse_field(
 
     let parser = get_parser(
         elem,
-        &name.input_name(),
+        name.input_name(),
         &parser_name,
         default_date_pattern,
         python,
@@ -546,10 +544,7 @@ fn parse_field_name(elem: &Element, qualifiers: &Qualifiers) -> Result<FieldName
     let input_name = attribute("input", elem)?;
     let primary_key = attributes.get("primary_key").cloned();
 
-    let primary_key = match primary_key {
-        Some(_) => true,
-        None => false,
-    };
+    let primary_key = primary_key.is_some();
 
     let output_name = attributes.get("output").cloned();
 
@@ -587,8 +582,8 @@ fn parse_object(
         if let Some(elem) = node.as_element() {
             let field = parse_field_node(
                 elem,
-                &qualifiers,
-                &default_date_pattern,
+                qualifiers,
+                default_date_pattern,
                 python,
                 extension,
                 contains_primary_key,
@@ -621,8 +616,7 @@ fn parse_array(
     let childrens: Vec<&Element> = elem
         .children
         .iter()
-        .map(|node| node.as_element())
-        .filter_map(|elem| elem)
+        .filter_map(|node| node.as_element())
         .collect();
 
     if childrens.len() != 1 {
@@ -695,8 +689,8 @@ fn parse_multi_input(
         if let Some(elem) = node.as_element() {
             let field = parse_field_node(
                 elem,
-                &qualifiers,
-                &default_date_pattern,
+                qualifiers,
+                default_date_pattern,
                 python,
                 extension,
                 contains_primary_key,
@@ -840,24 +834,20 @@ fn get_parser(
 fn child<'a>(key: &str, node: &'a Element) -> Result<&'a Element, Error> {
     match node.get_child(key) {
         Some(val) => Ok(val),
-        None => {
-            return Err(Error::ConfigurationError(format!(
-                "child '{key}' not found for node: '{}' ",
-                node.name
-            )));
-        }
+        None => Err(Error::ConfigurationError(format!(
+            "child '{key}' not found for node: '{}' ",
+            node.name
+        ))),
     }
 }
 
 fn attribute(key: &str, node: &Element) -> Result<String, Error> {
     match node.attributes.get(key) {
         Some(val) => Ok(val.to_string()),
-        None => {
-            return Err(Error::ConfigurationError(format!(
-                "attribute '{key}' not found for node: '{}' ",
-                node.name
-            )));
-        }
+        None => Err(Error::ConfigurationError(format!(
+            "attribute '{key}' not found for node: '{}' ",
+            node.name
+        ))),
     }
 }
 

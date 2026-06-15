@@ -1,4 +1,26 @@
-#![allow(clippy::result_large_err)]
+#![allow(
+    clippy::inherent_to_string_shadow_display,
+    clippy::large_enum_variant,
+    clippy::result_large_err,
+    clippy::should_implement_trait,
+    clippy::too_many_arguments
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::approx_constant,
+        clippy::bool_assert_comparison,
+        clippy::clone_on_copy,
+        clippy::field_reassign_with_default,
+        clippy::for_kv_map,
+        clippy::legacy_numeric_constants,
+        clippy::needless_borrows_for_generic_args,
+        clippy::redundant_pattern_matching,
+        clippy::single_char_add_str,
+        clippy::unnecessary_to_owned,
+        clippy::useless_format
+    )
+)]
 mod config_parser;
 mod configuration;
 mod date_util;

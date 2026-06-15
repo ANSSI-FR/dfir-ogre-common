@@ -179,14 +179,15 @@ pub struct Output {
     line_builder_with_qualifiers: Option<LineBuilder>,
 }
 impl Output {
-    fn select_datatype<'a>(
-        plugin_config: &'a PluginConfiguration,
+    fn select_datatype(
+        plugin_config: &PluginConfiguration,
         data_type: Option<String>,
-    ) -> Result<&'a DataTypeMapping, Error> {
+    ) -> Result<&DataTypeMapping, Error> {
         if plugin_config.data_type_configs.is_empty() {
-            return Err(Error::ConfigurationError(format!(
-                "invalid plugin configuration, it requires at least one data type configuration",
-            )));
+            return Err(Error::ConfigurationError(
+                "invalid plugin configuration, it requires at least one data type configuration"
+                    .to_string(),
+            ));
         }
 
         let data_type_conf = match data_type {

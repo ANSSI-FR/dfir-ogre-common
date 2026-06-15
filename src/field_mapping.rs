@@ -38,7 +38,7 @@ impl FieldParser {
     pub fn new(input_name: String, fields: Vec<Field>) -> Self {
         FieldParser {
             input_name: input_name.to_string(),
-            fields: fields,
+            fields,
         }
     }
 }
@@ -653,7 +653,7 @@ impl FieldParserTree {
                         Ok(())
                     }
                     ParserType::Array { field: _ } => {
-                        return Err(Error::UnsupportedNestingArray(input_name.to_string()));
+                        Err(Error::UnsupportedNestingArray(input_name.to_string()))
                     }
                 },
                 ParserType::Object { field_parsers } => {

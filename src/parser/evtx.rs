@@ -33,12 +33,12 @@ pub fn parse(
     metadata: Metadata,
 ) -> Result<RunReport, Error> {
     let data_type_config = &plugin_config.get_data_type_mapping(None)?;
-    let mut parser_tree = data_type_config
+    let parser_tree = data_type_config
         .field_mapping
         .as_ref()
-        .ok_or(Error::ConfigurationError(format!(
-            "There is no field mapping in the configuration"
-        )))?
+        .ok_or(Error::ConfigurationError(
+            "There is no field mapping in the configuration".to_string(),
+        ))?
         .get_field_parser_tree();
 
     let settings = ParserSettings::new().separate_json_attributes(true);
@@ -58,7 +58,7 @@ pub fn parse(
                     tuple.add(TIMESTAMP_FIELD, Value::Date(dt));
                 };
 
-                parse_record(rec, &mut tuple, &mut output, &mut parser_tree, &mut report);
+                parse_record(rec, &mut tuple, &mut output, &parser_tree, &mut report);
             }
             Err(e) => report.add_error(format!("{e}, Event number: {evt_number}")),
         };
@@ -78,16 +78,14 @@ fn parse_record(
 ) {
     let parse_unknown = if let Some(Parser::Ignore()) = parser_tree.default_parser {
         false
-    } else if parser_tree.ignore_parsing {
-        false
     } else {
-        true
+        !parser_tree.ignore_parsing
     };
 
     match get_event(record) {
         Ok(json) => {
             if let JsonValue::Object(map) = json {
-                match parse_json_object(map, Some(&parser_tree), parse_unknown, tuple) {
+                match parse_json_object(map, Some(parser_tree), parse_unknown, tuple) {
                     Ok(()) => {
                         if let Err(e) = output.write(tuple) {
                             report.add_error(e.to_string());

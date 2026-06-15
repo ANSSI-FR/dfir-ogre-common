@@ -297,7 +297,7 @@ fn build_standard_header(
     mapping: FieldMapping,
 ) -> Result<(), Error> {
     for fields in mapping.field_parser_tree.output_fields {
-        header.push_str(&fields.output_name());
+        header.push_str(fields.output_name());
         header.push(CSV_DELIMITER);
     }
     if normalized {

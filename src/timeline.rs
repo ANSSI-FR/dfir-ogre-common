@@ -352,17 +352,17 @@ impl ConditionalDescription {
     }
 
     pub fn evaluate(&mut self, name: &str, value: &Value) {
-        if let Some(expected) = self.conditions.get(name) {
-            if value == expected {
-                self.checked_conditions.insert(name.to_string());
-            }
+        if let Some(expected) = self.conditions.get(name)
+            && value == expected
+        {
+            self.checked_conditions.insert(name.to_string());
         }
         if self.optional_fields.contains(name) {
             self.fields.insert(name.to_string(), value.clone());
         }
     }
 
-    pub fn into_values(&mut self) -> Option<Vec<(String, Value)>> {
+    pub fn drain_values(&mut self) -> Option<Vec<(String, Value)>> {
         let values = if self.checked_conditions.len() == self.conditions.len() {
             let s: Vec<(String, Value)> = self.fields.drain(RangeFull).collect();
             Some(s)
@@ -857,7 +857,7 @@ impl TimeLineBuilder {
         }
         for cond in &self.conditional_fields {
             let mut cond = cond.0.lock().expect("mutex lock panicked");
-            if let Some(values) = cond.into_values() {
+            if let Some(values) = cond.drain_values() {
                 for (name, value) in values {
                     if let Value::Null() = value {
                     } else {

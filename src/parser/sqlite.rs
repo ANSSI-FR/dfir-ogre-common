@@ -61,9 +61,9 @@ pub fn parse(
         .params
         .get("query")
         .cloned()
-        .ok_or(Error::ConfigurationError(format!(
-            "'query' is not set in the configuration "
-        )))?;
+        .ok_or(Error::ConfigurationError(
+            "'query' is not set in the configuration ".to_string(),
+        ))?;
 
     let mut field_parsers = field_mapping.get_field_parser_tree();
 

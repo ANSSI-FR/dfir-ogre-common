@@ -73,16 +73,16 @@ fn parse(
         data_type_config
             .params
             .get("csv_delimiter")
-            .ok_or(Error::ConfigurationError(format!(
-                "csv_delimiter is not set in the configuration "
-            )))?;
+            .ok_or(Error::ConfigurationError(
+                "csv_delimiter is not set in the configuration ".to_string(),
+            ))?;
 
     let csv_delimiter: char = csv_delimiter
         .chars()
         .next()
-        .ok_or(Error::ConfigurationError(format!(
-            "csv_delimiter is empty "
-        )))?;
+        .ok_or(Error::ConfigurationError(
+            "csv_delimiter is empty ".to_string(),
+        ))?;
 
     let mut reader: csv::Reader<Box<dyn Read>> = csv::ReaderBuilder::new()
         .has_headers(true)
@@ -98,9 +98,9 @@ fn parse(
     let mut field_parsers = data_type_config
         .field_mapping
         .clone()
-        .ok_or(Error::ConfigurationError(format!(
-            "field mapping is empty "
-        )))?
+        .ok_or(Error::ConfigurationError(
+            "field mapping is empty ".to_string(),
+        ))?
         .get_field_parser_tree();
 
     for field_name in headers.iter() {

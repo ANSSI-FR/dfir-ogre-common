@@ -654,13 +654,7 @@ impl Field {
                 name: _,
                 parser,
                 default_value: _,
-            } => {
-                if let Parser::Ignore() = parser {
-                    true
-                } else {
-                    false
-                }
-            }
+            } => matches!(parser, Parser::Ignore()),
             Field::Multi(_) => false,
             Field::Array(_) => false,
             Field::Object {

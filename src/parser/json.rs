@@ -63,9 +63,9 @@ fn parse_json_internal(
     let mut parser_tree = data_type_config
         .field_mapping
         .as_ref()
-        .ok_or(Error::ConfigurationError(format!(
-            "There is no field mapping in the configuration"
-        )))?
+        .ok_or(Error::ConfigurationError(
+            "There is no field mapping in the configuration".to_string(),
+        ))?
         .get_field_parser_tree();
     let mut output = Output::new(run_config, plugin_config, metadata, None)?;
 
@@ -91,9 +91,9 @@ fn parse_jsonl_internal(
     let mut parser_tree = data_type_config
         .field_mapping
         .as_ref()
-        .ok_or(Error::ConfigurationError(format!(
-            "There is no field mapping in the configuration"
-        )))?
+        .ok_or(Error::ConfigurationError(
+            "There is no field mapping in the configuration".to_string(),
+        ))?
         .get_field_parser_tree();
 
     let file_handle = File::open(Path::new(input_file))
@@ -136,10 +136,8 @@ fn parse(
 ) {
     let parse_unknown = if let Some(Parser::Ignore()) = parser_tree.default_parser {
         false
-    } else if parser_tree.ignore_parsing {
-        false
     } else {
-        true
+        !parser_tree.ignore_parsing
     };
 
     if let JsonValue::Object(map) = json {

@@ -42,10 +42,8 @@ impl Value {
         buffer.push('{');
         let mut pos = 0;
         for (key, el) in record.iter() {
-            if !include_empty {
-                if let Value::Null() = el {
-                    continue;
-                }
+            if !include_empty && let Value::Null() = el {
+                continue;
             }
             if pos != 0 {
                 buffer.push(',');
@@ -323,13 +321,13 @@ pub fn escape_special_chars(v: &str) -> String {
             c => result.push(c),
         }
     }
-    return result;
+    result
 }
 
 /// Escape a string so that it can be safely embedded inside a string literal.
 ///
 pub fn escape_special_chars_csv(v: &str) -> String {
-    return v.replace("\"", "\"\"");
+    v.replace("\"", "\"\"")
 }
 
 #[cfg(test)]

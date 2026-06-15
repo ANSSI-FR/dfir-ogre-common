@@ -88,25 +88,25 @@ fn parse(
         .params
         .get("regex")
         .cloned()
-        .ok_or(Error::ConfigurationError(format!(
-            "'regex' is not set in the configuration "
-        )))?;
+        .ok_or(Error::ConfigurationError(
+            "'regex' is not set in the configuration ".to_string(),
+        ))?;
 
     let policy = data_mapping
         .params
         .get("regexp_fail_policy")
-        .ok_or(Error::ConfigurationError(format!(
-            "'regexp_fail_policy' is not set in the configuration "
-        )))?;
+        .ok_or(Error::ConfigurationError(
+            "'regexp_fail_policy' is not set in the configuration ".to_string(),
+        ))?;
     let fail_policy = FailPolicy::from_string(policy)?;
 
     //get the last field parameters for the 'Merge' policy
     let last_field = field_mapping
         .last_field
         .as_ref()
-        .ok_or(Error::ConfigurationError(format!(
-            "Invalid mapping, at least one field must be declared"
-        )))?;
+        .ok_or(Error::ConfigurationError(
+            "Invalid mapping, at least one field must be declared".to_string(),
+        ))?;
 
     let last_field_name = if let Field::Single {
         name,
@@ -116,9 +116,9 @@ fn parse(
     {
         name.input_name()
     } else {
-        return Err(Error::ConfigurationError(format!(
-            "last field must be a normal field (not an array, an object, etc.) "
-        )));
+        return Err(Error::ConfigurationError(
+            "last field must be a normal field (not an array, an object, etc.) ".to_string(),
+        ));
     };
 
     if let FailPolicy::Merge = fail_policy {
@@ -130,9 +130,9 @@ fn parse(
             && let Parser::String() = parser
         {
         } else {
-            return Err(Error::ConfigurationError(format!(
-                "For the 'Merge' policy, last field must be have a String parser"
-            )));
+            return Err(Error::ConfigurationError(
+                "For the 'Merge' policy, last field must be have a String parser".to_string(),
+            ));
         }
     }
 
@@ -271,11 +271,9 @@ impl FailPolicy {
             "Skip" => Ok(Self::Skip),
             "Fail" => Ok(Self::Fail),
             "Merge" => Ok(Self::Merge),
-            _ => {
-                return Err(Error::ConfigurationError(format!(
-                    "Invalid policy, expecting : 'Skip', 'Fail' or 'Merge'"
-                )));
-            }
+            _ => Err(Error::ConfigurationError(
+                "Invalid policy, expecting : 'Skip', 'Fail' or 'Merge'".to_string(),
+            )),
         }
     }
 }

@@ -40,18 +40,18 @@ pub fn parse(
     let mut parser_tree = data_type_config
         .field_mapping
         .as_ref()
-        .ok_or(Error::ConfigurationError(format!(
-            "There is no field mapping in the configuration"
-        )))?
+        .ok_or(Error::ConfigurationError(
+            "There is no field mapping in the configuration".to_string(),
+        ))?
         .get_field_parser_tree();
 
     let tuple_xpath =
         data_type_config
             .params
             .get("xpath_tuple")
-            .ok_or(Error::ConfigurationError(format!(
-                "'xpath_tuple' is not set in the configuration "
-            )))?;
+            .ok_or(Error::ConfigurationError(
+                "'xpath_tuple' is not set in the configuration ".to_string(),
+            ))?;
 
     let mut xpath_cache = XPathCache::new();
     let xpath_expr = xpath_cache.build(tuple_xpath)?;

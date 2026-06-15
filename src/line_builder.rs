@@ -130,7 +130,7 @@ pub struct LineBuilder {
     pub force_snake_case: bool,
     /// Internal state holding the current line's processed data and timeline records.
     pub line_data: LineData,
-    ///
+    /// If `true`, compute deterministic identifiers from metadata and line data.
     pub compute_hash: bool,
 }
 
@@ -286,7 +286,7 @@ impl LineBuilder {
                         line_data,
                         timeline_builder,
                         timeline_fields,
-                        &name,
+                        name,
                         field.ignore(),
                         root,
                     );
@@ -384,7 +384,7 @@ impl LineBuilder {
             {
                 timeline_builder.add_date(*date, field_name);
             } else if let Value::Null() = &value {
-                line_data.add_data(&field_name, value);
+                line_data.add_data(field_name, value);
                 return; //return early to avoid inserting empty fields in the timeline data
             }
 
@@ -396,10 +396,10 @@ impl LineBuilder {
                 timeline_builder.add_field_value(&tl_field.fields, field_name.name(false), &value);
             }
 
-            line_data.add_data(&field_name, value);
+            line_data.add_data(field_name, value);
         } else if root {
             //for the root elements, always include every fields
-            line_data.add_data(&field_name, Value::Null());
+            line_data.add_data(field_name, Value::Null());
         }
     }
 
@@ -526,7 +526,7 @@ impl LineBuilder {
                     );
                 }
 
-                line_data.add_data(&name, value_array);
+                line_data.add_data(name, value_array);
                 Ok(())
             }
             Field::Multi(multi_input_field) => {
@@ -594,7 +594,7 @@ impl LineBuilder {
                         if let Value::Object(mut inner_data) = v {
                             let inner_tl_fields = timeline_fields
                                 .and_then(|tl| tl.get(output_name))
-                                .and_then(|tf| Some(&tf.nested));
+                                .map(|tf| &tf.nested);
 
                             let mut inner_insert = LineData::with_capacity(
                                 fields.len(),
@@ -617,7 +617,7 @@ impl LineBuilder {
                     }
                 }
 
-                line_data.add_data(&name, Value::Array(result_array));
+                line_data.add_data(name, Value::Array(result_array));
 
                 Ok(())
             }

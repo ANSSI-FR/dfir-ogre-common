@@ -7,7 +7,7 @@ homepage = "https://github.com/ANSSI-FR/dfir-ogre-common"
 repository = "https://github.com/ANSSI-FR/dfir-ogre-common"
 documentation = "https://github.com/ANSSI-FR/dfir-ogre-common"
 readme = "README.md"
-licence = "Apache 2.0"
+license = "Apache-2.0"
 
 [lib]
 name = "dfir_ogre_common"
