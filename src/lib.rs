@@ -27,6 +27,7 @@ mod date_util;
 mod errors;
 mod field;
 mod field_mapping;
+mod field_traversal;
 mod format_csv;
 mod format_json;
 mod lib_py;
