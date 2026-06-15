@@ -77,3 +77,6 @@ docs/_build/
 
 #leveldb
 /test_data/leveldb/LOG*
+
+AGENTS.md
+/doc/superpowers

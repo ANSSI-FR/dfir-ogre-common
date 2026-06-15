@@ -358,4 +358,36 @@ mod tests {
         let expected = "\"Alice\",30,,true,\"[1,2]\",\"{\"\"name\"\":\"\"Bob\"\",\"\"age\"\":42}\"";
         assert_eq!(buf, expected);
     }
+
+    #[test]
+    fn record_capacity_remove_contains_len_and_clear() {
+        let mut record = Record::with_capacity(2);
+        assert!(record.is_empty());
+
+        record.insert("alpha".to_string(), Value::Int(1));
+        record.add("beta", Value::Bool(true));
+
+        assert_eq!(record.len(), 2);
+        assert!(record.contains_key("alpha"));
+        assert_eq!(record.remove("alpha"), Some(Value::Int(1)));
+        assert!(!record.contains_key("alpha"));
+        assert_eq!(record.len(), 1);
+
+        record.clear();
+        assert!(record.is_empty());
+    }
+
+    #[test]
+    fn record_json_serialise_can_omit_null_fields() {
+        let mut record = Record::new();
+        record.add("name", Value::String("Alice".to_string()));
+        record.add("empty", Value::Null());
+
+        let mut buffer = String::new();
+        record
+            .json_serialise(&mut buffer, &DateOutputCodec::Iso(), false)
+            .unwrap();
+
+        assert_eq!(buffer, r#"{"name":"Alice"}"#);
+    }
 }

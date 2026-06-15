@@ -180,3 +180,122 @@ impl RunReport {
         self.output_reports.push(output_result);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn plugin_description_getters_return_constructor_values() {
+        let description = PluginDescription::new(
+            "collect_evtx".to_string(),
+            "Collects Windows event logs".to_string(),
+        );
+
+        assert_eq!(description.get_command(), "collect_evtx");
+        assert_eq!(description.get_description(), "Collects Windows event logs");
+    }
+
+    #[test]
+    fn output_configuration_new_stores_all_fields() {
+        let mut params = HashMap::new();
+        params.insert("compression_level".to_string(), "9".to_string());
+
+        let config = OutputConfiguration::new(
+            "events".to_string(),
+            "/tmp/output".to_string(),
+            "gzip".to_string(),
+            "normalized_jsonl".to_string(),
+            "iso".to_string(),
+            true,
+            true,
+            false,
+            params.clone(),
+        );
+
+        assert_eq!(config.base_file_name, "events");
+        assert_eq!(config.output_folder, "/tmp/output");
+        assert_eq!(config.output_type, "gzip");
+        assert_eq!(config.format, "normalized_jsonl");
+        assert_eq!(config.date_format, "iso");
+        assert!(config.with_timeline);
+        assert!(config.with_qualifiers);
+        assert!(!config.include_empty);
+        assert_eq!(config.params, params);
+    }
+
+    #[test]
+    fn run_configuration_new_defaults_missing_params_to_empty_map() {
+        let output = OutputConfiguration::new(
+            "records".to_string(),
+            "/tmp/output".to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso_utc".to_string(),
+            false,
+            false,
+            true,
+            HashMap::new(),
+        );
+
+        let config = RunConfiguration::new(vec![output], false, None);
+
+        assert_eq!(config.output.len(), 1);
+        assert!(!config.force_snake_case);
+        assert!(config.params.is_empty());
+    }
+
+    #[test]
+    fn run_configuration_new_uses_provided_params() {
+        let mut params = HashMap::new();
+        params.insert("case_id".to_string(), Some("IR-42".to_string()));
+        params.insert("optional".to_string(), None);
+
+        let config = RunConfiguration::new(vec![], true, Some(params.clone()));
+
+        assert!(config.output.is_empty());
+        assert!(config.force_snake_case);
+        assert_eq!(config.params, params);
+    }
+
+    #[test]
+    fn run_report_add_error_tracks_last_error_and_count() {
+        let mut report = RunReport::new();
+
+        report.add_error("first".to_string());
+        report.add_error("second".to_string());
+
+        assert_eq!(report.last_error.as_deref(), Some("second"));
+        assert_eq!(report.num_errors, 2);
+        assert!(report.output_reports.is_empty());
+    }
+
+    #[test]
+    fn run_report_add_output_report_accumulates_nested_errors() {
+        let mut report = RunReport::new();
+        let output_report = OutputReport {
+            last_error: Some("write failed".to_string()),
+            num_errors: 3,
+            file_reports: vec![],
+        };
+
+        report.add_output_report(output_report);
+
+        assert_eq!(report.last_error.as_deref(), Some("write failed"));
+        assert_eq!(report.num_errors, 3);
+        assert_eq!(report.output_reports.len(), 1);
+    }
+
+    #[test]
+    fn run_report_add_output_report_without_errors_preserves_error_state() {
+        let mut report = RunReport::new();
+        report.add_error("parse failed".to_string());
+
+        report.add_output_report(OutputReport::default());
+
+        assert_eq!(report.last_error.as_deref(), Some("parse failed"));
+        assert_eq!(report.num_errors, 1);
+        assert_eq!(report.output_reports.len(), 1);
+    }
+}

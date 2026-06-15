@@ -449,3 +449,125 @@ impl Output {
         report
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DateInputCodec, configuration::DataTypeMapping};
+    use std::collections::HashMap;
+
+    fn data_type_mapping(data_type: &str) -> DataTypeMapping {
+        DataTypeMapping {
+            data_type: data_type.to_string(),
+            description: None,
+            default_date_pattern: DateInputCodec::Iso(),
+            params: HashMap::new(),
+            timeline: None,
+            field_mapping: None,
+            has_primary_key: false,
+        }
+    }
+
+    fn plugin_config(data_types: Vec<&str>) -> PluginConfiguration {
+        PluginConfiguration {
+            plugin: "test-plugin".to_string(),
+            file_encoding: "UTF_8".to_string(),
+            data_type_configs: data_types.into_iter().map(data_type_mapping).collect(),
+        }
+    }
+
+    #[test]
+    fn output_type_from_str_accepts_known_values_case_insensitively() {
+        assert!(matches!(
+            OutputType::from_str("file").unwrap(),
+            OutputType::File
+        ));
+        assert!(matches!(
+            OutputType::from_str("GZIP").unwrap(),
+            OutputType::Gzip
+        ));
+    }
+
+    #[test]
+    fn output_type_from_str_rejects_unknown_value() {
+        match OutputType::from_str("stdout") {
+            Err(Error::InvalidOutputType(value)) => assert_eq!(value, "stdout"),
+            Ok(_) => panic!("unknown output type unexpectedly parsed"),
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn output_format_from_str_accepts_known_values() {
+        assert!(matches!(
+            OutputFormat::from_str("jsonl").unwrap(),
+            OutputFormat::Jsonl
+        ));
+        assert!(matches!(
+            OutputFormat::from_str("normalized_jsonl").unwrap(),
+            OutputFormat::NormalizedJsonl
+        ));
+        assert!(matches!(
+            OutputFormat::from_str("csv").unwrap(),
+            OutputFormat::Csv
+        ));
+        assert!(matches!(
+            OutputFormat::from_str("normalized_csv").unwrap(),
+            OutputFormat::NormalizedCsv
+        ));
+    }
+
+    #[test]
+    fn output_format_from_str_rejects_unknown_value() {
+        match OutputFormat::from_str("json") {
+            Err(Error::InvalidOutputFormat(value)) => assert_eq!(value, "json"),
+            Ok(_) => panic!("unknown output format unexpectedly parsed"),
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn select_datatype_uses_first_mapping_when_none_requested() {
+        let config = plugin_config(vec!["events", "files"]);
+
+        let selected = Output::select_datatype(&config, None).unwrap();
+
+        assert_eq!(selected.data_type, "events");
+    }
+
+    #[test]
+    fn select_datatype_uses_named_mapping_when_requested() {
+        let config = plugin_config(vec!["events", "files"]);
+
+        let selected = Output::select_datatype(&config, Some("files".to_string())).unwrap();
+
+        assert_eq!(selected.data_type, "files");
+    }
+
+    #[test]
+    fn select_datatype_rejects_empty_plugin_configuration() {
+        let config = plugin_config(vec![]);
+
+        match Output::select_datatype(&config, None) {
+            Err(Error::ConfigurationError(message)) => {
+                assert!(message.contains("at least one data type configuration"));
+            }
+            Ok(selected) => panic!("unexpectedly selected {}", selected.data_type),
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn select_datatype_rejects_unknown_requested_mapping() {
+        let config = plugin_config(vec!["events"]);
+
+        match Output::select_datatype(&config, Some("files".to_string())) {
+            Err(Error::ConfigurationError(message)) => {
+                assert!(message.contains("'files' not found"));
+                assert!(message.contains("test-plugin"));
+            }
+            Ok(selected) => panic!("unexpectedly selected {}", selected.data_type),
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
+}

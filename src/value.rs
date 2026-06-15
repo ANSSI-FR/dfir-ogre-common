@@ -418,4 +418,30 @@ mod tests {
         let a2 = Value::Array(vec![Value::Int(3), Value::Int(2), Value::Int(1)]);
         assert_ne!(hash_of(&a1), hash_of(&a2));
     }
+
+    #[test]
+    fn value_is_null_distinguishes_null_from_other_values() {
+        assert!(Value::Null().is_null());
+        assert!(!Value::String("".to_string()).is_null());
+    }
+
+    #[test]
+    fn value_to_string_formats_arrays_objects_and_metadata() {
+        use std::sync::Arc;
+
+        let array = Value::Array(vec![Value::Int(1), Value::String("two".to_string())]);
+        assert_eq!(array.to_string(&DateOutputCodec::Iso()), "[1, two]");
+
+        let mut record = Record::new();
+        record.add("a", Value::Int(1));
+        record.add("b", Value::String("two".to_string()));
+        let object = Value::Object(record);
+        assert_eq!(
+            object.to_string(&DateOutputCodec::Iso()),
+            "'a':'1', 'b':'two'"
+        );
+
+        let metadata = Value::Metadata(MetadataSerialized(Arc::new("raw".to_string())));
+        assert_eq!(metadata.to_string(&DateOutputCodec::Iso()), "raw");
+    }
 }

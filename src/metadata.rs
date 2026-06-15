@@ -351,4 +351,19 @@ mod tests {
         }
         assert_eq!(1, line_number);
     }
+
+    #[test]
+    fn json_serialise_outputs_optional_strings_dates_and_escapes_values() {
+        let creation_date = parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        let mut metadata = Metadata::new("host1".to_string());
+        metadata.data_type = "evtx".to_string();
+        metadata.folder = Some("folder \"quoted\"".to_string());
+        metadata.creation_date = Some(creation_date);
+
+        let mut buffer = String::new();
+        metadata.json_serialise(&mut buffer, &DateOutputCodec::Iso());
+
+        let expected = r#"{"computer":"host1","data_type":"evtx","folder":"folder \"quoted\"","creation_date":"2020-01-01T00:00:00.000000+00:00"}"#;
+        assert_eq!(buffer, expected);
+    }
 }

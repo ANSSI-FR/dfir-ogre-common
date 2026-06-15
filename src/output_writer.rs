@@ -84,8 +84,58 @@ impl Writer for GzipWriter {
     }
 
     fn close(&mut self) -> Result<(), Error> {
-        self.writer.flush()?;
         self.writer.try_finish()?;
+        self.writer.get_mut().flush()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::read::GzDecoder;
+    use std::{
+        fs::{self, File},
+        io::Read,
+        path::PathBuf,
+    };
+
+    fn temp_file(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("dfir_ogre_common_{name}_{}", std::process::id()))
+    }
+
+    #[test]
+    fn file_writer_writes_buffer_when_closed() {
+        let path = temp_file("file_writer.txt");
+        let file = File::create(&path).unwrap();
+        let mut writer = FileWriter::new(file);
+        let mut buffer = "first line\nsecond line".to_string();
+
+        writer.write(&mut buffer).unwrap();
+        writer.close().unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "first line\nsecond line"
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn gzip_writer_finishes_readable_gzip_stream_when_closed() {
+        let path = temp_file("gzip_writer.gz");
+        let file = File::create(&path).unwrap();
+        let mut writer = GzipWriter::new(file, 6);
+        let mut buffer = "compressed payload".to_string();
+
+        writer.write(&mut buffer).unwrap();
+        writer.close().unwrap();
+
+        let mut decoder = GzDecoder::new(File::open(&path).unwrap());
+        let mut decoded = String::new();
+        decoder.read_to_string(&mut decoded).unwrap();
+
+        assert_eq!(decoded, "compressed payload");
+        fs::remove_file(path).unwrap();
     }
 }

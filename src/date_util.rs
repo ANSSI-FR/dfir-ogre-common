@@ -392,4 +392,19 @@ mod tests {
         let serialized = serialize_date(&date, &output_codec);
         assert_eq!(serialized, "2021-08-02T13:10:27.000000+00:00");
     }
+
+    #[test]
+    fn timestamp_hex_accepts_prefixed_and_plain_values() {
+        let codec = DateInputCodec::from_str("timestamp_hex");
+
+        let prefixed = parse_date("0x5010ad0a", &codec).unwrap();
+        let plain = parse_date("5010ad0a", &codec).unwrap();
+
+        assert_eq!(prefixed, plain);
+        assert_eq!(prefixed.timestamp(), 0x5010ad0a);
+        assert_eq!(
+            serialize_date(&prefixed, &DateOutputCodec::from_string("iso")),
+            "2012-07-26T02:35:54.000000+00:00"
+        );
+    }
 }
