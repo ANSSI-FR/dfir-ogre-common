@@ -1585,6 +1585,223 @@ mod tests {
         assert!(line_builder.line_data.timeline.is_empty());
     }
 
+    #[test]
+    fn mapped_nested_object_does_not_invent_missing_child_fields() {
+        let mapping = FieldMapping::new(
+            vec![Field::Object {
+                name: FieldName::new("details".to_owned(), false, None, None, None, None),
+                ignore: false,
+                fields: vec![
+                    Field::Single {
+                        name: FieldName::new("present".to_owned(), false, None, None, None, None),
+                        parser: Parser::String(),
+                        default_value: None,
+                    },
+                    Field::Single {
+                        name: FieldName::new("missing".to_owned(), false, None, None, None, None),
+                        parser: Parser::String(),
+                        default_value: None,
+                    },
+                ],
+            }],
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("test".into()),
+            None,
+            mapping,
+            false,
+            false,
+            false,
+            false,
+        );
+        let mut details = Record::new();
+        details.add("present", Value::String("kept".to_owned()));
+        let mut record = Record::new();
+        record.add("details", Value::Object(details));
+
+        line_builder.build(&mut record).unwrap();
+
+        let details = match line_builder.line_data.data.get("details").unwrap() {
+            Value::Object(details) => details,
+            value => panic!("expected details object, got {value:?}"),
+        };
+        assert_eq!(
+            details.get("present"),
+            Some(&Value::String("kept".to_owned()))
+        );
+        assert!(!details.contains_key("missing"));
+    }
+
+    #[test]
+    fn ignored_object_mapping_skips_output() {
+        let mapping = FieldMapping::new(
+            vec![Field::Object {
+                name: FieldName::new("details".to_owned(), false, None, None, None, None),
+                ignore: true,
+                fields: vec![Field::Single {
+                    name: FieldName::new("hidden".to_owned(), false, None, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                }],
+            }],
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("test".into()),
+            None,
+            mapping,
+            false,
+            false,
+            false,
+            false,
+        );
+        let mut details = Record::new();
+        details.add("hidden", Value::String("secret".to_owned()));
+        let mut record = Record::new();
+        record.add("details", Value::Object(details));
+
+        line_builder.build(&mut record).unwrap();
+
+        assert!(!line_builder.line_data.data.contains_key("details"));
+    }
+
+    #[test]
+    fn mapped_array_objects_preserve_renamed_and_unmapped_fields() {
+        let mapping = FieldMapping::new(
+            vec![Field::Array(ArrayField::new(Field::Object {
+                name: FieldName::new("items".to_owned(), false, None, None, None, None),
+                ignore: false,
+                fields: vec![Field::Single {
+                    name: FieldName::new(
+                        "parsed_name".to_owned(),
+                        false,
+                        Some("item_name".to_owned()),
+                        None,
+                        None,
+                        None,
+                    ),
+                    parser: Parser::String(),
+                    default_value: None,
+                }],
+            }))],
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("test".into()),
+            None,
+            mapping,
+            false,
+            false,
+            false,
+            true,
+        );
+        let mut item = Record::new();
+        item.add("item_name", Value::String("first".to_owned()));
+        item.add("ExtraField", Value::Bool(true));
+        let mut record = Record::new();
+        record.add("items", Value::Array(vec![Value::Object(item)]));
+
+        line_builder.build(&mut record).unwrap();
+
+        let items = match line_builder.line_data.data.get("items").unwrap() {
+            Value::Array(items) => items,
+            value => panic!("expected items array, got {value:?}"),
+        };
+        let first = match &items[0] {
+            Value::Object(first) => first,
+            value => panic!("expected first item object, got {value:?}"),
+        };
+        assert_eq!(
+            first.get("item_name"),
+            Some(&Value::String("first".to_owned()))
+        );
+        assert_eq!(first.get("extra_field"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn unmapped_nested_objects_respect_force_snake_case() {
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("test".into()),
+            None,
+            FieldMapping::new(vec![], None),
+            false,
+            false,
+            false,
+            true,
+        );
+        let mut inner = Record::new();
+        inner.add("InnerValue", Value::String("nested".to_owned()));
+        let mut record = Record::new();
+        record.add("OuterObject", Value::Object(inner));
+
+        line_builder.build(&mut record).unwrap();
+
+        let outer = match line_builder.line_data.data.get("outer_object").unwrap() {
+            Value::Object(outer) => outer,
+            value => panic!("expected outer object, got {value:?}"),
+        };
+        assert_eq!(
+            outer.get("inner_value"),
+            Some(&Value::String("nested".to_owned()))
+        );
+    }
+
+    #[test]
+    fn unmapped_null_is_preserved_without_timeline() {
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("test".into()),
+            None,
+            FieldMapping::new(vec![], None),
+            false,
+            false,
+            false,
+            true,
+        );
+        let mut record = Record::new();
+        record.add("MissingValue", Value::Null());
+
+        line_builder.build(&mut record).unwrap();
+
+        assert_eq!(
+            line_builder.line_data.data.get("missing_value"),
+            Some(&Value::Null())
+        );
+    }
+
+    #[test]
+    fn timeline_build_records_unmapped_date() {
+        let codec = DateInputCodec::Iso();
+        let date = parse_date("2020-01-01T00:00:00Z", &codec).unwrap();
+        let timeline_builder = TimeLineBuilder::new(
+            TimeLineType::Standard,
+            "test_data".to_owned(),
+            usize::MAX,
+            None,
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("test".into()),
+            Some(timeline_builder),
+            FieldMapping::new(vec![], None),
+            false,
+            false,
+            false,
+            true,
+        );
+        let mut record = Record::new();
+        record.add("UnmappedDate", Value::Date(date));
+
+        line_builder.build(&mut record).unwrap();
+
+        assert_eq!(line_builder.line_data.timeline.len(), 1);
+        assert_eq!(
+            line_builder.line_data.timeline[0].timestamp_meaning,
+            "unmapped_date"
+        );
+        assert!(line_builder.line_data.data.contains_key("unmapped_date"));
+    }
+
     fn primary_key_mapping() -> FieldMapping {
         FieldMapping::new(
             vec![
