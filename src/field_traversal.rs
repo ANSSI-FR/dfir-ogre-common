@@ -73,8 +73,7 @@ where
         }
     }
 
-    let unmapped: Vec<(String, Value)> = input_data.drain().collect();
-    for (key, value) in unmapped {
+    for (key, value) in input_data.drain() {
         handler.visit_unmapped_field(key, value, force_snake_case)?;
     }
 
