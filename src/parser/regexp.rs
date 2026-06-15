@@ -283,9 +283,220 @@ mod tests {
 
     use std::{fs, path::Path};
 
-    use crate::OutputConfiguration;
+    use crate::{
+        DateInputCodec, FieldMapping, FieldName, OutputConfiguration,
+        configuration::DataTypeMapping,
+    };
 
     use super::*;
+
+    fn remove_dir_if_exists(path: &Path) {
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
+    fn regexp_output_conf(base_file_name: &str, output_folder: &Path) -> OutputConfiguration {
+        OutputConfiguration::new(
+            base_file_name.to_string(),
+            output_folder.display().to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            false,
+            false,
+            true,
+            HashMap::new(),
+        )
+    }
+
+    fn regexp_plugin_config(regex: &str, fail_policy: &str) -> PluginConfiguration {
+        let mut params = HashMap::new();
+        params.insert("regex".to_owned(), regex.to_owned());
+        params.insert("regexp_fail_policy".to_owned(), fail_policy.to_owned());
+        PluginConfiguration {
+            plugin: "regexp-test".to_string(),
+            file_encoding: "UTF_8".to_string(),
+            data_type_configs: vec![DataTypeMapping {
+                data_type: "mini_log".to_string(),
+                description: None,
+                default_date_pattern: DateInputCodec::Iso(),
+                params,
+                timeline: None,
+                field_mapping: Some(FieldMapping::new(
+                    vec![
+                        Field::Single {
+                            name: FieldName::new("date".to_owned(), false, None, None, None, None),
+                            parser: Parser::String(),
+                            default_value: None,
+                        },
+                        Field::Single {
+                            name: FieldName::new("level".to_owned(), false, None, None, None, None),
+                            parser: Parser::String(),
+                            default_value: None,
+                        },
+                        Field::Single {
+                            name: FieldName::new(
+                                "message".to_owned(),
+                                false,
+                                None,
+                                None,
+                                None,
+                                None,
+                            ),
+                            parser: Parser::String(),
+                            default_value: None,
+                        },
+                    ],
+                    None,
+                )),
+                has_primary_key: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn optional_capture_group_sets_null_when_missing() {
+        let output_folder = Path::new(".tmp").join("regexp_optional_capture");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("optional.log");
+        fs::write(&input_path, "2026-01-01 INFO started\n2026-01-02 stopped\n").unwrap();
+        let regex = r"^(?P<date>\d{4}-\d{2}-\d{2}) (?:(?P<level>INFO|WARN) )?(?P<message>.*)";
+        let run_config = RunConfiguration::new(
+            vec![regexp_output_conf("optional", &output_folder)],
+            true,
+            None,
+        );
+
+        let report = parse_regexp(
+            input_path.to_str().unwrap(),
+            run_config,
+            regexp_plugin_config(regex, "Fail"),
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert_eq!(report.last_error, None);
+        let jsonl = fs::read_to_string(output_folder.join("optional.mini_log.jsonl")).unwrap();
+        let lines: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[0]["level"], "INFO");
+        assert!(lines[1]["level"].is_null());
+        assert_eq!(lines[1]["message"], "stopped");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn merge_policy_reports_leading_continuation_and_keeps_later_records() {
+        let output_folder = Path::new(".tmp").join("regexp_merge_leading");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("merge.log");
+        fs::write(
+            &input_path,
+            "orphan continuation\n2026-01-01 INFO started\ncontinued details\n2026-01-02 WARN next\n",
+        )
+        .unwrap();
+        let regex = r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<level>INFO|WARN) (?P<message>.*)";
+        let run_config = RunConfiguration::new(
+            vec![regexp_output_conf("merge", &output_folder)],
+            true,
+            None,
+        );
+
+        let report = parse_regexp(
+            input_path.to_str().unwrap(),
+            run_config,
+            regexp_plugin_config(regex, "Merge"),
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert_eq!(report.num_errors, 1);
+        assert!(report.last_error.as_ref().unwrap().contains("line:'0'"));
+        let jsonl = fs::read_to_string(output_folder.join("merge.mini_log.jsonl")).unwrap();
+        let lines: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["message"], "started\ncontinued details");
+        assert_eq!(lines[1]["message"], "next");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn skip_policy_ignores_unmatched_lines() {
+        let output_folder = Path::new(".tmp").join("regexp_skip_policy");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("skip.log");
+        fs::write(
+            &input_path,
+            "unmatched line\n2026-01-01 INFO kept\nanother unmatched line\n",
+        )
+        .unwrap();
+        let regex = r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<level>INFO|WARN) (?P<message>.*)";
+        let run_config =
+            RunConfiguration::new(vec![regexp_output_conf("skip", &output_folder)], true, None);
+
+        let report = parse_regexp(
+            input_path.to_str().unwrap(),
+            run_config,
+            regexp_plugin_config(regex, "Skip"),
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+        let jsonl = fs::read_to_string(output_folder.join("skip.mini_log.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(jsonl.trim()).unwrap();
+        assert_eq!(line["message"], "kept");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn invalid_fail_policy_is_reported() {
+        let output_folder = Path::new(".tmp").join("regexp_invalid_policy");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("invalid_policy.log");
+        fs::write(&input_path, "2026-01-01 INFO ignored\n").unwrap();
+        let regex = r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<level>INFO|WARN) (?P<message>.*)";
+        let run_config = RunConfiguration::new(
+            vec![regexp_output_conf("invalid_policy", &output_folder)],
+            true,
+            None,
+        );
+
+        let report = parse_regexp(
+            input_path.to_str().unwrap(),
+            run_config,
+            regexp_plugin_config(regex, "Bogus"),
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert!(
+            report
+                .last_error
+                .as_ref()
+                .unwrap()
+                .contains("Invalid policy")
+        );
+        assert_eq!(report.num_errors, 1);
+
+        remove_dir_if_exists(&output_folder);
+    }
 
     #[test]
     fn log_parse() {

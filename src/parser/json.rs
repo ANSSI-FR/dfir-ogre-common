@@ -268,11 +268,286 @@ fn get_values(
 }
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fs};
+    use std::{
+        collections::HashMap,
+        fs,
+        path::{Path, PathBuf},
+    };
 
-    use crate::OutputConfiguration;
+    use crate::{
+        DateInputCodec, Field, FieldMapping, FieldName, OutputConfiguration, Parser,
+        configuration::DataTypeMapping, field::ArrayField,
+    };
 
     use super::*;
+
+    fn remove_dir_if_exists(path: &Path) {
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
+    fn test_folder(name: &str) -> PathBuf {
+        let path = Path::new(".tmp").join(name);
+        remove_dir_if_exists(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn output_conf(base_file_name: &str, output_folder: &Path) -> OutputConfiguration {
+        OutputConfiguration::new(
+            base_file_name.to_string(),
+            output_folder.display().to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            false,
+            false,
+            true,
+            HashMap::new(),
+        )
+    }
+
+    fn json_plugin_config(data_type: &str, field_mapping: FieldMapping) -> PluginConfiguration {
+        PluginConfiguration {
+            plugin: "json-test".to_string(),
+            file_encoding: "UTF_8".to_string(),
+            data_type_configs: vec![DataTypeMapping {
+                data_type: data_type.to_string(),
+                description: None,
+                default_date_pattern: DateInputCodec::Iso(),
+                params: HashMap::new(),
+                timeline: None,
+                field_mapping: Some(field_mapping),
+                has_primary_key: false,
+            }],
+        }
+    }
+
+    fn simple_event_mapping() -> FieldMapping {
+        FieldMapping::new(
+            vec![Field::Single {
+                name: FieldName::new("event".to_owned(), false, None, None, None, None),
+                parser: Parser::String(),
+                default_value: None,
+            }],
+            None,
+        )
+    }
+
+    fn nested_json_mapping() -> FieldMapping {
+        FieldMapping::new(
+            vec![
+                Field::Single {
+                    name: FieldName::new("event".to_owned(), false, None, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+                Field::Object {
+                    name: FieldName::new("details".to_owned(), false, None, None, None, None),
+                    ignore: false,
+                    fields: vec![
+                        Field::Single {
+                            name: FieldName::new("user".to_owned(), false, None, None, None, None),
+                            parser: Parser::String(),
+                            default_value: None,
+                        },
+                        Field::Single {
+                            name: FieldName::new(
+                                "success".to_owned(),
+                                false,
+                                None,
+                                None,
+                                None,
+                                None,
+                            ),
+                            parser: Parser::Bool(),
+                            default_value: None,
+                        },
+                    ],
+                },
+                Field::Array(ArrayField::new(Field::Object {
+                    name: FieldName::new("items".to_owned(), false, None, None, None, None),
+                    ignore: false,
+                    fields: vec![
+                        Field::Single {
+                            name: FieldName::new("name".to_owned(), false, None, None, None, None),
+                            parser: Parser::String(),
+                            default_value: None,
+                        },
+                        Field::Single {
+                            name: FieldName::new("size".to_owned(), false, None, None, None, None),
+                            parser: Parser::Int(),
+                            default_value: None,
+                        },
+                    ],
+                })),
+            ],
+            None,
+        )
+    }
+
+    #[test]
+    fn jsonl_malformed_line_records_error_and_continues() {
+        let output_folder = test_folder("jsonl_malformed_line");
+        let input_path = output_folder.join("input.jsonl");
+        fs::write(
+            &input_path,
+            "{\"event\":\"first\"}\n{not valid json}\n{\"event\":\"second\"}\n",
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![output_conf("malformed", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_edge", simple_event_mapping());
+
+        let report = parse_jsonl(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.num_errors, 1);
+        assert!(report.last_error.is_some());
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 2);
+
+        let jsonl = fs::read_to_string(output_folder.join("malformed.json_edge.jsonl")).unwrap();
+        let lines: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[0]["event"], "first");
+        assert_eq!(lines[1]["event"], "second");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn jsonl_empty_input_produces_empty_output_report() {
+        let output_folder = test_folder("jsonl_empty_input");
+        let input_path = output_folder.join("empty.jsonl");
+        fs::write(&input_path, "").unwrap();
+        let run_config =
+            RunConfiguration::new(vec![output_conf("empty", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_edge", simple_event_mapping());
+
+        let report = parse_jsonl(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.num_errors, 0);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 0);
+        let jsonl = fs::read_to_string(output_folder.join("empty.json_edge.jsonl")).unwrap();
+        assert!(jsonl.is_empty());
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn json_nested_objects_and_arrays_follow_mapping() {
+        let output_folder = test_folder("json_nested_objects_arrays");
+        let input_path = output_folder.join("nested.json");
+        fs::write(
+            &input_path,
+            r#"{
+                "event": "login",
+                "details": { "user": "alice", "success": true },
+                "items": [
+                    { "name": "one", "size": 1 },
+                    { "name": "two", "size": 2 }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![output_conf("nested", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_edge", nested_json_mapping());
+
+        let report = parse_json(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+        let jsonl = fs::read_to_string(output_folder.join("nested.json_edge.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(jsonl.trim()).unwrap();
+        assert_eq!(line["event"], "login");
+        assert_eq!(line["details"]["user"], "alice");
+        assert_eq!(line["details"]["success"], true);
+        assert_eq!(line["items"][0]["name"], "one");
+        assert_eq!(line["items"][1]["size"], 2);
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn json_top_level_non_object_writes_no_records() {
+        let output_folder = test_folder("json_top_level_non_object");
+        let input_path = output_folder.join("array.json");
+        fs::write(&input_path, r#"[{"event":"ignored"}]"#).unwrap();
+        let run_config =
+            RunConfiguration::new(vec![output_conf("array", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_edge", simple_event_mapping());
+
+        let report = parse_json(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 0);
+        let jsonl = fs::read_to_string(output_folder.join("array.json_edge.jsonl")).unwrap();
+        assert!(jsonl.is_empty());
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn json_default_ignore_suppresses_unknown_nested_objects() {
+        let output_folder = test_folder("json_default_ignore_nested");
+        let input_path = output_folder.join("nested_unknown.json");
+        fs::write(
+            &input_path,
+            r#"{
+                "details": { "secret": "hidden" }
+            }"#,
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![output_conf("ignored", &output_folder)], true, None);
+        let plugin_config = json_plugin_config(
+            "json_edge",
+            FieldMapping::new(vec![], Some(Parser::Ignore())),
+        );
+
+        let report = parse_json(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+        let jsonl = fs::read_to_string(output_folder.join("ignored.json_edge.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(jsonl.trim()).unwrap();
+        assert!(line.get("details").is_none());
+        assert_eq!(line["ogre_md"]["computer"], "test");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
     #[test]
     fn json() {
         let output_folder = ".tmp";

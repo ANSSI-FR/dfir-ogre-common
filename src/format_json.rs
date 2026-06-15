@@ -268,6 +268,14 @@ mod tests {
 
     use super::*;
 
+    fn remove_if_exists(path: &Path) {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
     /// Tests writing to a plain text file.
     /// It checks that each line is properly formatted in JSON and terminated with a newline,
     /// and that the output matches the expected content.
@@ -314,6 +322,99 @@ mod tests {
         let expected = "{\"greetings\":\"Hello\",\"ogre_md\":{\"computer\":\"test\",\"data_type\":\"\"}}\n{\"greetings\":\"World\",\"ogre_md\":{\"computer\":\"test\",\"data_type\":\"\"}}\n";
 
         assert_eq!(expected, message)
+    }
+
+    #[test]
+    fn serialized_metadata_reuses_cached_value() {
+        std::fs::create_dir_all(TMP_FOLDER).unwrap();
+        let path = Path::new(TMP_FOLDER).join("test_metadata_cache.jsonl");
+        remove_if_exists(&path);
+
+        let mut output = JsonFormatter::new(
+            OutputType::File,
+            TMP_FOLDER,
+            "test_metadata_cache",
+            DateOutputCodec::Iso(),
+            false,
+            false,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+        let mut metadata = Metadata::new("host-a".into());
+        metadata.data_type = "evtx".into();
+
+        let first = output.serialized_metadata(&metadata);
+        metadata.computer = "host-b".into();
+        let second = output.serialized_metadata(&metadata);
+
+        assert!(std::sync::Arc::ptr_eq(&first.0, &second.0));
+        assert_eq!(
+            first.0.as_ref(),
+            "{\"computer\":\"host-a\",\"data_type\":\"evtx\"}"
+        );
+
+        drop(output);
+        remove_if_exists(&path);
+    }
+
+    #[test]
+    fn normalized_file_writes_metadata_and_data_records() {
+        std::fs::create_dir_all(TMP_FOLDER).unwrap();
+        let data_path = Path::new(TMP_FOLDER).join("test_normalized_json.jsonl");
+        let metadata_path = Path::new(TMP_FOLDER).join("ogre_metadata.jsonl");
+        remove_if_exists(&data_path);
+        remove_if_exists(&metadata_path);
+
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("host-json".into()),
+            None,
+            FieldMapping::new(vec![], None),
+            false,
+            true,
+            false,
+            true,
+        );
+        let mut output = JsonFormatter::new(
+            OutputType::File,
+            TMP_FOLDER,
+            "test_normalized_json",
+            DateOutputCodec::Iso(),
+            false,
+            false,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            true,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("greetings", Value::String("Hello".to_owned()));
+        line_builder.build(&mut record).unwrap();
+
+        output.write_metadata(&line_builder).unwrap();
+        output.write_normalized(&line_builder).unwrap();
+        assert_eq!(output.file_report.num_lines, 1);
+
+        drop(output);
+
+        let metadata_json: serde_json::Value =
+            serde_json::from_str(fs::read_to_string(&metadata_path).unwrap().trim()).unwrap();
+        assert_eq!(metadata_json["computer"], "host-json");
+        assert!(metadata_json["id"].as_str().is_some());
+
+        let data_json: serde_json::Value =
+            serde_json::from_str(fs::read_to_string(&data_path).unwrap().trim()).unwrap();
+        assert_eq!(data_json["greetings"], "Hello");
+        assert!(data_json["ogre_md_id"].as_str().unwrap().len() > 10);
+        assert!(data_json["ogre_id"].as_str().unwrap().len() > 10);
+
+        remove_if_exists(&data_path);
+        remove_if_exists(&metadata_path);
     }
 
     /// Tests writing to a gzipped file.

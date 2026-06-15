@@ -325,6 +325,14 @@ mod tests {
 
     use super::*;
 
+    fn remove_if_exists(path: &Path) {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
     /// Tests writing to a plain text file.
     /// It checks that each line is properly formatted in JSON and terminated with a newline,
     /// and that the output matches the expected content.
@@ -456,6 +464,44 @@ mod tests {
     }
 
     #[test]
+    fn serialized_metadata_reuses_cached_value() {
+        std::fs::create_dir_all(TMP_FOLDER).unwrap();
+        let path = Path::new(TMP_FOLDER).join("test_metadata_cache.csv");
+        remove_if_exists(&path);
+
+        let mut output = CsvFormatter::new(
+            None,
+            OutputType::File,
+            TMP_FOLDER,
+            "test_metadata_cache",
+            DateOutputCodec::Iso(),
+            false,
+            false,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+        let mut metadata = Metadata::new("host-a".into());
+        metadata.data_type = "evtx".into();
+
+        let first = output.serialized_metadata(&metadata);
+        metadata.computer = "host-b".into();
+        let second = output.serialized_metadata(&metadata);
+
+        assert!(std::sync::Arc::ptr_eq(&first.0, &second.0));
+        assert_eq!(
+            first.0.as_ref(),
+            "{\"\"computer\"\":\"\"host-a\"\",\"\"data_type\"\":\"\"evtx\"\"}"
+        );
+
+        drop(output);
+        remove_if_exists(&path);
+    }
+
+    #[test]
     fn normalized_output() {
         std::fs::create_dir_all(TMP_FOLDER).unwrap();
         let timeline_builder = TimeLineBuilder::new(
@@ -524,7 +570,8 @@ mod tests {
         record.add("greetings", Value::String("Hello".to_owned()));
         line_builder.build(&mut record).unwrap();
         ouput.write_normalized(&line_builder).unwrap();
-        drop(ouput);
+        assert_eq!(ouput.file_report.num_lines, 1);
+        ouput.close().unwrap();
 
         let path = Path::new(TMP_FOLDER).join(format!("ogre_metadata.csv"));
         fs::remove_file(path).unwrap();

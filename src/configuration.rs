@@ -904,6 +904,110 @@ mod tests {
 
     use super::*;
 
+    fn configuration_error(data: &str) -> String {
+        match PluginConfiguration::from_str(data, None, None) {
+            Err(Error::ConfigurationError(message)) => message,
+            Err(error) => panic!("unexpected error: {error}"),
+            Ok(_) => panic!("configuration unexpectedly parsed"),
+        }
+    }
+
+    #[test]
+    fn from_str_rejects_non_plugin_root() {
+        let message = configuration_error(
+            r#"<?xml version="1.0" encoding="UTF-8"?><not_plugin parser="Test" />"#,
+        );
+
+        assert!(message.contains("root node must be 'plugin'"));
+    }
+
+    #[test]
+    fn from_str_requires_parser_attribute() {
+        let message = configuration_error(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plugin>
+   <mapping data_type="test">
+      <fields />
+   </mapping>
+</plugin>"#,
+        );
+
+        assert!(message.contains("attribute 'parser' not found"));
+    }
+
+    #[test]
+    fn from_str_rejects_plugin_without_mappings() {
+        let message = configuration_error(
+            r#"<?xml version="1.0" encoding="UTF-8"?><plugin parser="Test" />"#,
+        );
+
+        assert!(message.contains("at least one DataTypeMapping"));
+    }
+
+    #[test]
+    fn mapping_preserves_params_and_default_ignore_parser() {
+        let data = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Test">
+   <mapping data_type="test">
+      <default_parser value="Ignore" />
+      <csv_delimiter value="|" />
+      <text_param>
+         padded text
+      </text_param>
+      <fields />
+   </mapping>
+</plugin>"#;
+        let config = PluginConfiguration::from_str(data, None, None).unwrap();
+        let mapping = &config.data_type_configs[0];
+
+        assert_eq!(mapping.params.get("csv_delimiter").unwrap(), "|");
+        assert_eq!(mapping.params.get("text_param").unwrap(), "padded text");
+
+        let mut parser_tree = mapping
+            .field_mapping
+            .as_ref()
+            .unwrap()
+            .get_field_parser_tree();
+        let parser = parser_tree.get_parser("unknown").unwrap();
+        let mut record = crate::Record::new();
+        parser.parse(Some("ignored"), &mut record).unwrap();
+        assert!(record.is_empty());
+    }
+
+    #[test]
+    fn array_definition_requires_exactly_one_child_field() {
+        let message = configuration_error(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Test">
+   <mapping data_type="test">
+      <fields>
+         <array>
+            <field input="first" parser="String" />
+            <field input="second" parser="String" />
+         </array>
+      </fields>
+   </mapping>
+</plugin>"#,
+        );
+
+        assert!(message.contains("Array definition requires exactly *one* field"));
+    }
+
+    #[test]
+    fn invalid_default_parser_is_rejected() {
+        let message = configuration_error(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Test">
+   <mapping data_type="test">
+      <default_parser value="Int" />
+      <fields />
+   </mapping>
+</plugin>"#,
+        );
+
+        assert!(message.contains("default parser can be either"));
+    }
+
     #[test]
     fn test_basic_parsers() {
         let data = r#"<?xml version="1.0" encoding="UTF-8"?>

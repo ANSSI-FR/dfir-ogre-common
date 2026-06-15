@@ -769,7 +769,7 @@ impl FieldMapping {
 #[cfg(test)]
 mod tests {
 
-    use crate::{DateInputCodec, Qualifiers};
+    use crate::{DateInputCodec, Qualifiers, field::ArrayField};
 
     use super::*;
 
@@ -861,6 +861,214 @@ mod tests {
                 "unknown".to_owned(),
             ])
             .unwrap();
+    }
+
+    #[test]
+    fn parse_uses_default_parser_for_unknown_fields() {
+        let mapping = FieldMapping::new(vec![], Some(Parser::Int()));
+        let tree = mapping.get_field_parser_tree();
+        let mut record = Record::new();
+
+        tree.parse("unknown_count", Some("42"), &mut record)
+            .unwrap();
+
+        assert_eq!(record.get("unknown_count"), Some(&Value::Int(42)));
+    }
+
+    #[test]
+    fn parse_rejects_object_parser_type() {
+        let mapping = FieldMapping::new(field_mapping(), None);
+        let tree = mapping.get_field_parser_tree();
+        let mut record = Record::new();
+
+        let error = tree
+            .parse("System", Some("ignored"), &mut record)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::errors::Error::InvalidParserType(name) if name == "System"
+        ));
+    }
+
+    #[test]
+    fn parser_subtree_reports_output_name() {
+        let mapping = FieldMapping::new(field_mapping(), None);
+        let system = mapping.get_parser_subtree("System").unwrap();
+
+        assert_eq!(system.get_output_name(), "system");
+        assert!(
+            system
+                .get_parser_subtree("TimeCreated_attributes")
+                .is_some()
+        );
+        assert!(system.get_parser_subtree("EventRecordID").is_none());
+    }
+
+    #[test]
+    fn set_field_value_uses_output_names_for_objects_and_unknowns() {
+        let mapping = FieldMapping::new(field_mapping(), None);
+        let tree = mapping.get_field_parser_tree();
+        let mut record = Record::new();
+
+        tree.set_field_value("timestamp", Value::String("raw".to_owned()), &mut record)
+            .unwrap();
+        assert_eq!(
+            record.get("timestamp"),
+            Some(&Value::String("raw".to_owned()))
+        );
+
+        let mut system = Record::new();
+        system.add("event_record_id", Value::Int(7));
+        tree.set_field_value("System", Value::Object(system.clone()), &mut record)
+            .unwrap();
+        assert_eq!(record.get("system"), Some(&Value::Object(system)));
+
+        tree.set_field_value("unknown", Value::Bool(true), &mut record)
+            .unwrap();
+        assert_eq!(record.get("unknown"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn set_field_value_handles_array_mapped_objects() {
+        let mapping = FieldMapping::new(
+            vec![Field::Array(ArrayField(Box::new(Field::Object {
+                name: FieldName::new(
+                    "Items".to_owned(),
+                    false,
+                    Some("items".to_owned()),
+                    None,
+                    None,
+                    None,
+                ),
+                ignore: false,
+                fields: vec![Field::Single {
+                    name: FieldName::new(
+                        "Name".to_owned(),
+                        false,
+                        Some("name".to_owned()),
+                        None,
+                        None,
+                        None,
+                    ),
+                    parser: Parser::String(),
+                    default_value: None,
+                }],
+            })))],
+            None,
+        );
+        let tree = mapping.get_field_parser_tree();
+        let mut record = Record::new();
+        let mut item = Record::new();
+        item.add("name", Value::String("first".to_owned()));
+
+        tree.set_field_value("Items", Value::Object(item.clone()), &mut record)
+            .unwrap();
+
+        assert_eq!(record.get("items"), Some(&Value::Object(item)));
+    }
+
+    #[test]
+    fn field_parser_parse_into_value_skips_ignored_fields() {
+        let parser = FieldParser::new(
+            "count".to_owned(),
+            vec![
+                Field::Single {
+                    name: FieldName::new("ignored".to_owned(), false, None, None, None, None),
+                    parser: Parser::Ignore(),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("count".to_owned(), false, None, None, None, None),
+                    parser: Parser::Int(),
+                    default_value: None,
+                },
+            ],
+        );
+
+        let value = parser.parse_into_value(Some("42")).unwrap();
+
+        assert_eq!(value, Some(Value::Int(42)));
+    }
+
+    #[test]
+    fn field_parser_set_value_updates_all_shared_input_fields() {
+        let parser = FieldParser::new(
+            "shared".to_owned(),
+            vec![
+                Field::Single {
+                    name: FieldName::new(
+                        "shared".to_owned(),
+                        false,
+                        Some("first".to_owned()),
+                        None,
+                        None,
+                        None,
+                    ),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new(
+                        "shared".to_owned(),
+                        false,
+                        Some("second".to_owned()),
+                        None,
+                        None,
+                        None,
+                    ),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+            ],
+        );
+        let mut record = Record::new();
+
+        parser
+            .set_value(Value::String("same".to_owned()), &mut record)
+            .unwrap();
+
+        assert_eq!(record.get("first"), Some(&Value::String("same".to_owned())));
+        assert_eq!(
+            record.get("second"),
+            Some(&Value::String("same".to_owned()))
+        );
+    }
+
+    #[test]
+    fn set_field_value_rejects_nested_array_parser() {
+        let leaf_parser = FieldParser::new(
+            "items".to_owned(),
+            vec![Field::Single {
+                name: FieldName::new("items".to_owned(), false, None, None, None, None),
+                parser: Parser::String(),
+                default_value: None,
+            }],
+        );
+        let nested_array = ParserType::Array {
+            field: BoxedParserType(Box::new(ParserType::Field {
+                parser: leaf_parser,
+            })),
+        };
+        let tree = FieldParserTree {
+            parsers: indexmap::IndexMap::from([(
+                "items".to_owned(),
+                ParserType::Array {
+                    field: BoxedParserType(Box::new(nested_array)),
+                },
+            )]),
+            ..Default::default()
+        };
+        let mut record = Record::new();
+
+        let error = tree
+            .set_field_value("items", Value::Array(vec![]), &mut record)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::errors::Error::UnsupportedNestingArray(name) if name == "items"
+        ));
     }
 
     fn field_mapping() -> Vec<Field> {

@@ -189,7 +189,8 @@ mod tests {
     use serde_json::Value;
 
     use crate::{
-        OutputConfiguration,
+        DateInputCodec, Field, FieldMapping, FieldName, OutputConfiguration, Parser,
+        configuration::DataTypeMapping,
         field::ParserExtension,
         format_csv::CSV_DELIMITER,
         parser::windows_parsers::{win_frn_hex_parser, win_ntfs_flag_parser},
@@ -197,6 +198,230 @@ mod tests {
     };
 
     use super::*;
+
+    fn remove_dir_if_exists(path: &Path) {
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
+    fn csv_output_conf(base_file_name: &str, output_folder: &Path) -> OutputConfiguration {
+        OutputConfiguration::new(
+            base_file_name.to_string(),
+            output_folder.display().to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            false,
+            false,
+            true,
+            HashMap::new(),
+        )
+    }
+
+    fn csv_plugin_config(delimiter: &str) -> PluginConfiguration {
+        let mut params = HashMap::new();
+        params.insert("csv_delimiter".to_owned(), delimiter.to_owned());
+        PluginConfiguration {
+            plugin: "csv-test".to_string(),
+            file_encoding: "UTF_8".to_string(),
+            data_type_configs: vec![DataTypeMapping {
+                data_type: "csv_edge".to_string(),
+                description: None,
+                default_date_pattern: DateInputCodec::Iso(),
+                params,
+                timeline: None,
+                field_mapping: Some(FieldMapping::new(
+                    vec![
+                        Field::Single {
+                            name: FieldName::new(
+                                "Name".to_owned(),
+                                false,
+                                Some("name".to_owned()),
+                                None,
+                                None,
+                                None,
+                            ),
+                            parser: Parser::String(),
+                            default_value: None,
+                        },
+                        Field::Single {
+                            name: FieldName::new(
+                                "Message".to_owned(),
+                                false,
+                                Some("message".to_owned()),
+                                None,
+                                None,
+                                None,
+                            ),
+                            parser: Parser::String(),
+                            default_value: None,
+                        },
+                        Field::Single {
+                            name: FieldName::new(
+                                "Count".to_owned(),
+                                false,
+                                Some("count".to_owned()),
+                                None,
+                                None,
+                                None,
+                            ),
+                            parser: Parser::Int(),
+                            default_value: None,
+                        },
+                    ],
+                    None,
+                )),
+                has_primary_key: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn csv_parser_preserves_quoted_delimiters_and_escaped_quotes() {
+        let output_folder = Path::new(".tmp").join("csv_quoted_delimiters");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("quoted.csv");
+        fs::write(
+            &input_path,
+            "Name|Message|Count\nAlice|\"hello | world\"|7\nBob|\"escaped \"\"quote\"\"\"|8\n",
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![csv_output_conf("quoted", &output_folder)], true, None);
+
+        let report = parse_csv(
+            input_path.to_str().unwrap(),
+            run_config,
+            csv_plugin_config("|"),
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 2);
+        let jsonl = fs::read_to_string(output_folder.join("quoted.csv_edge.jsonl")).unwrap();
+        let lines: Vec<Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[0]["message"], "hello | world");
+        assert_eq!(lines[1]["message"], "escaped \"quote\"");
+        assert_eq!(lines[1]["count"], 8);
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn csv_parser_short_rows_emit_null_for_missing_mapped_values() {
+        let output_folder = Path::new(".tmp").join("csv_short_rows");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("short.csv");
+        fs::write(
+            &input_path,
+            "Name;Message;Count\nAlice;complete;1\nBob;2\nCara;after;3\n",
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![csv_output_conf("short", &output_folder)], true, None);
+
+        let report = parse_csv(
+            input_path.to_str().unwrap(),
+            run_config,
+            csv_plugin_config(";"),
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 3);
+        let jsonl = fs::read_to_string(output_folder.join("short.csv_edge.jsonl")).unwrap();
+        let lines: Vec<Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[1]["name"], "Bob");
+        assert_eq!(lines[1]["message"], "2");
+        assert!(lines[1]["count"].is_null());
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn csv_parser_reports_missing_delimiter_configuration() {
+        let output_folder = Path::new(".tmp").join("csv_missing_delimiter");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("input.csv");
+        fs::write(&input_path, "Name;Message;Count\nAlice;ok;1\n").unwrap();
+        let run_config = RunConfiguration::new(
+            vec![csv_output_conf("missing_delimiter", &output_folder)],
+            true,
+            None,
+        );
+        let mut plugin_config = csv_plugin_config(";");
+        plugin_config.data_type_configs[0].params.clear();
+
+        let report = parse_csv(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert!(
+            report
+                .last_error
+                .as_ref()
+                .unwrap()
+                .contains("csv_delimiter is not set")
+        );
+        assert_eq!(report.num_errors, 1);
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn csv_parser_stops_after_invalid_value_exceeds_error_budget() {
+        let output_folder = Path::new(".tmp").join("csv_invalid_value_budget");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("invalid.csv");
+        fs::write(
+            &input_path,
+            "Name;Message;Count\nAlice;ok;1\nBob;bad;not-int\nCara;ok;3\n",
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![csv_output_conf("invalid", &output_folder)], true, None);
+
+        let report = parse_csv(
+            input_path.to_str().unwrap(),
+            run_config,
+            csv_plugin_config(";"),
+            Metadata::new("test".into()),
+            0,
+        );
+
+        let last_error = report.last_error.as_ref().unwrap();
+        assert!(last_error.contains("parsing column '2' in line: '2'"));
+        assert_eq!(report.num_errors, 1);
+
+        let jsonl = fs::read_to_string(output_folder.join("invalid.csv_edge.jsonl")).unwrap();
+        let lines: Vec<Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["name"], "Alice");
+
+        remove_dir_if_exists(&output_folder);
+    }
 
     /// Tests the parsing of an NTFSInfo CSV file.
     ///

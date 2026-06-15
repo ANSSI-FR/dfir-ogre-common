@@ -1512,6 +1512,115 @@ mod tests {
     }
 
     #[test]
+    fn compute_hash_uses_only_primary_key_fields_when_present() {
+        let field_mapping = primary_key_mapping();
+
+        let first_id = build_hashed_line(
+            Metadata::new("host".into()),
+            field_mapping.clone(),
+            "stable-id",
+            "first message",
+        );
+        let second_id = build_hashed_line(
+            Metadata::new("host".into()),
+            field_mapping,
+            "stable-id",
+            "changed message",
+        );
+
+        assert_eq!(first_id, second_id);
+    }
+
+    #[test]
+    fn compute_hash_includes_metadata_filename_and_vss() {
+        let field_mapping = primary_key_mapping();
+        let mut first_metadata = Metadata::new("host".into());
+        first_metadata.original_filename = Some("artifact-a.evtx".to_owned());
+        first_metadata.vss = Some("snapshot-1".to_owned());
+        let mut second_metadata = Metadata::new("host".into());
+        second_metadata.original_filename = Some("artifact-b.evtx".to_owned());
+        second_metadata.vss = Some("snapshot-2".to_owned());
+
+        let first_id = build_hashed_line(
+            first_metadata,
+            field_mapping.clone(),
+            "stable-id",
+            "same message",
+        );
+        let second_id =
+            build_hashed_line(second_metadata, field_mapping, "stable-id", "same message");
+
+        assert_ne!(first_id, second_id);
+    }
+
+    #[test]
+    fn timeline_build_skips_unmapped_null_values() {
+        let timeline_builder = TimeLineBuilder::new(
+            TimeLineType::Standard,
+            "test_data".to_owned(),
+            usize::MAX,
+            None,
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("test".into()),
+            Some(timeline_builder),
+            FieldMapping::new(vec![], None),
+            false,
+            false,
+            false,
+            true,
+        );
+        let mut record = Record::new();
+        record.add("MissingValue", Value::Null());
+        record.add("Message", Value::String("present".to_owned()));
+
+        line_builder.build(&mut record).unwrap();
+
+        assert!(!line_builder.line_data.data.contains_key("missing_value"));
+        assert_eq!(
+            line_builder.line_data.data.get("message"),
+            Some(&Value::String("present".to_owned()))
+        );
+        assert!(line_builder.line_data.timeline.is_empty());
+    }
+
+    fn primary_key_mapping() -> FieldMapping {
+        FieldMapping::new(
+            vec![
+                Field::Single {
+                    name: FieldName::new("id".to_owned(), true, None, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("message".to_owned(), false, None, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+            ],
+            None,
+        )
+    }
+
+    fn build_hashed_line(
+        metadata: Metadata,
+        field_mapping: FieldMapping,
+        id: &str,
+        message: &str,
+    ) -> String {
+        let mut line_builder =
+            LineBuilder::new(metadata, None, field_mapping, false, true, true, true);
+        let mut record = Record::new();
+        record.add("id", Value::String(id.to_owned()));
+        record.add("message", Value::String(message.to_owned()));
+
+        line_builder.build(&mut record).unwrap();
+
+        line_builder.line_data.data_id.unwrap()
+    }
+
+    #[test]
     fn test_to_snake_case() {
         //empty
         assert_eq!(to_snake_case(""), "");

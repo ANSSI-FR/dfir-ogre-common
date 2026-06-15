@@ -454,8 +454,15 @@ impl Output {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DateInputCodec, configuration::DataTypeMapping};
-    use std::collections::HashMap;
+    use crate::{
+        DateInputCodec, Field, FieldName, OutputConfiguration, Parser, Value,
+        configuration::DataTypeMapping, format_csv::CSV_DELIMITER,
+    };
+    use std::{
+        collections::HashMap,
+        fs,
+        path::{Path, PathBuf},
+    };
 
     fn data_type_mapping(data_type: &str) -> DataTypeMapping {
         DataTypeMapping {
@@ -475,6 +482,255 @@ mod tests {
             file_encoding: "UTF_8".to_string(),
             data_type_configs: data_types.into_iter().map(data_type_mapping).collect(),
         }
+    }
+
+    fn remove_dir_if_exists(path: &Path) {
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
+    fn test_output_folder(name: &str) -> PathBuf {
+        let path = Path::new(".tmp").join(name);
+        remove_dir_if_exists(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn mapped_plugin_config(data_type: &str, field_mapping: FieldMapping) -> PluginConfiguration {
+        PluginConfiguration {
+            plugin: "test-plugin".to_string(),
+            file_encoding: "UTF_8".to_string(),
+            data_type_configs: vec![DataTypeMapping {
+                data_type: data_type.to_string(),
+                description: None,
+                default_date_pattern: DateInputCodec::Iso(),
+                params: HashMap::new(),
+                timeline: None,
+                field_mapping: Some(field_mapping),
+                has_primary_key: false,
+            }],
+        }
+    }
+
+    fn event_field_mapping() -> FieldMapping {
+        FieldMapping::new(
+            vec![Field::Single {
+                name: FieldName::new("event".to_owned(), false, None, None, None, None),
+                parser: Parser::String(),
+                default_value: None,
+            }],
+            None,
+        )
+    }
+
+    fn normalized_output_config(
+        base_file_name: &str,
+        output_folder: &Path,
+        format: &str,
+    ) -> OutputConfiguration {
+        OutputConfiguration::new(
+            base_file_name.to_string(),
+            output_folder.display().to_string(),
+            "file".to_string(),
+            format.to_string(),
+            "iso".to_string(),
+            false,
+            false,
+            true,
+            HashMap::new(),
+        )
+    }
+
+    fn json_output_config(
+        base_file_name: &str,
+        output_folder: &Path,
+        with_qualifiers: bool,
+        params: HashMap<String, String>,
+    ) -> OutputConfiguration {
+        OutputConfiguration::new(
+            base_file_name.to_string(),
+            output_folder.display().to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            false,
+            with_qualifiers,
+            true,
+            params,
+        )
+    }
+
+    #[test]
+    fn normalized_outputs_dispatch_data_and_write_metadata() {
+        let output_folder = test_output_folder("output_normalized_dispatch");
+        let base_file_name = "dispatch";
+        let field_mapping = event_field_mapping();
+        let run_config = RunConfiguration::new(
+            vec![
+                normalized_output_config(base_file_name, &output_folder, "normalized_jsonl"),
+                normalized_output_config(base_file_name, &output_folder, "normalized_csv"),
+            ],
+            true,
+            None,
+        );
+        let plugin_config = mapped_plugin_config("events", field_mapping);
+        let mut output = Output::new(
+            run_config,
+            plugin_config,
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+
+        output.write(&mut record).unwrap();
+        for (writer, _) in &mut output.outputs {
+            writer.close().unwrap();
+        }
+        let report = output.get_report();
+        drop(output);
+
+        assert!(record.is_empty());
+        assert_eq!(report.file_reports.len(), 2);
+        assert!(
+            report
+                .file_reports
+                .iter()
+                .all(|file_report| file_report.num_lines == 1)
+        );
+
+        let json_data_path = output_folder.join("dispatch.events.jsonl");
+        let json_data: serde_json::Value =
+            serde_json::from_str(fs::read_to_string(&json_data_path).unwrap().trim()).unwrap();
+        assert_eq!(json_data["event"], "login");
+        assert!(json_data["ogre_md_id"].as_str().unwrap().len() > 10);
+
+        let json_metadata_path = output_folder.join("ogre_metadata.jsonl");
+        let json_metadata: serde_json::Value =
+            serde_json::from_str(fs::read_to_string(&json_metadata_path).unwrap().trim()).unwrap();
+        assert_eq!(json_metadata["computer"], "host-output");
+        assert_eq!(json_metadata["data_type"], "events");
+
+        let csv_data_path = output_folder.join("dispatch.events.csv");
+        let csv_data = fs::read_to_string(&csv_data_path).unwrap();
+        let mut csv_reader = csv::ReaderBuilder::new()
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(csv_data.as_bytes());
+        let headers = csv_reader.headers().unwrap().clone();
+        assert_eq!(&headers[0], "event");
+        assert_eq!(&headers[1], "ogre_id");
+        assert_eq!(&headers[2], "ogre_md_id");
+        let csv_record = csv_reader.records().next().unwrap().unwrap();
+        assert_eq!(&csv_record[0], "login");
+        assert!(csv_record[1].len() > 10);
+        assert!(csv_record[2].len() > 10);
+
+        let csv_metadata_path = output_folder.join("ogre_metadata.csv");
+        let metadata_csv = fs::read_to_string(&csv_metadata_path).unwrap();
+        let mut metadata_reader = csv::ReaderBuilder::new()
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(metadata_csv.as_bytes());
+        let metadata_record = metadata_reader.records().next().unwrap().unwrap();
+        assert_eq!(&metadata_record[0], "host-output");
+        assert_eq!(&metadata_record[1], "events");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn output_new_rejects_invalid_compression_level_param() {
+        let output_folder = test_output_folder("output_bad_compression");
+        let mut params = HashMap::new();
+        params.insert(COMPRESSION_LEVEL.to_owned(), "fast".to_owned());
+        let run_config = RunConfiguration::new(
+            vec![json_output_config(
+                "bad_compression",
+                &output_folder,
+                false,
+                params,
+            )],
+            true,
+            None,
+        );
+        let plugin_config = mapped_plugin_config("events", event_field_mapping());
+
+        let result = Output::new(
+            run_config,
+            plugin_config,
+            Metadata::new("host-output".into()),
+            None,
+        );
+
+        assert!(result.is_err());
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn mixed_qualifier_outputs_use_separate_line_builders() {
+        let output_folder = test_output_folder("output_mixed_qualifiers");
+        let field_mapping = FieldMapping::new(
+            vec![Field::Single {
+                name: FieldName::new(
+                    "event".to_owned(),
+                    false,
+                    None,
+                    Some("event_tag".to_owned()),
+                    None,
+                    None,
+                ),
+                parser: Parser::String(),
+                default_value: None,
+            }],
+            None,
+        );
+        let run_config = RunConfiguration::new(
+            vec![
+                json_output_config("plain", &output_folder, false, HashMap::new()),
+                json_output_config("qualified", &output_folder, true, HashMap::new()),
+            ],
+            true,
+            None,
+        );
+        let plugin_config = mapped_plugin_config("events", field_mapping);
+        let mut output = Output::new(
+            run_config,
+            plugin_config,
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+
+        output.write(&mut record).unwrap();
+        for (writer, _) in &mut output.outputs {
+            writer.close().unwrap();
+        }
+        drop(output);
+
+        let plain: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("plain.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let qualified: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("qualified.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+
+        assert_eq!(plain["event"], "login");
+        assert!(plain.get("event:event_tag").is_none());
+        assert_eq!(qualified["event:event_tag"], "login");
+        assert!(qualified.get("event").is_none());
+
+        remove_dir_if_exists(&output_folder);
     }
 
     #[test]
