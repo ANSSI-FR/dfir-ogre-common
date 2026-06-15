@@ -5,6 +5,7 @@ use blake3::Hasher;
 use crate::{
     Field, FieldMapping, FieldName, Metadata, Record, Value,
     errors::Error,
+    field_traversal::{self, FieldTraversalHandler},
     timeline::{TimeLine, TimeLineBuilder, TimelineField},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE as BASE64};
@@ -132,6 +133,84 @@ pub struct LineBuilder {
     pub line_data: LineData,
     /// If `true`, compute deterministic identifiers from metadata and line data.
     pub compute_hash: bool,
+}
+
+struct LineBuildTraversal<'a> {
+    line_data: &'a mut LineData,
+    timeline_builder: Option<&'a TimeLineBuilder>,
+    timeline_fields: Option<&'a HashMap<String, TimelineField>>,
+}
+
+impl FieldTraversalHandler for LineBuildTraversal<'_> {
+    fn visit_flat_field(
+        &mut self,
+        input_data: &mut Record,
+        field_name: &FieldName,
+        ignore: bool,
+        root: bool,
+    ) {
+        LineBuilder::process_flat_field(
+            input_data,
+            self.line_data,
+            self.timeline_builder,
+            self.timeline_fields,
+            field_name,
+            ignore,
+            root,
+        );
+    }
+
+    fn visit_object_field(
+        &mut self,
+        input_data: &mut Record,
+        field_name: &FieldName,
+        fields: &[Field],
+        ignore: bool,
+        force_snake_case: bool,
+    ) -> Result<(), Error> {
+        LineBuilder::process_object_field_mapping(
+            input_data,
+            self.line_data,
+            self.timeline_builder,
+            self.timeline_fields,
+            field_name,
+            fields,
+            ignore,
+            force_snake_case,
+        )
+    }
+
+    fn visit_array_field(
+        &mut self,
+        input_data: &mut Record,
+        inner_field: &Field,
+        force_snake_case: bool,
+    ) -> Result<(), Error> {
+        LineBuilder::process_array_field_mapping(
+            input_data,
+            self.line_data,
+            inner_field,
+            self.timeline_builder,
+            self.timeline_fields,
+            force_snake_case,
+        )
+    }
+
+    fn visit_unmapped_field(
+        &mut self,
+        key: String,
+        value: Value,
+        force_snake_case: bool,
+    ) -> Result<(), Error> {
+        LineBuilder::process_unmapped_field(
+            key,
+            value,
+            self.line_data,
+            self.timeline_builder,
+            self.timeline_fields,
+            force_snake_case,
+        )
+    }
 }
 
 impl LineBuilder {
@@ -269,82 +348,23 @@ impl LineBuilder {
         line_data: &mut LineData,
         timeline_builder: Option<&TimeLineBuilder>,
         timeline_fields: Option<&HashMap<String, TimelineField>>,
-        field_mapping: &Vec<Field>,
+        field_mapping: &[Field],
         force_snake_case: bool,
         root: bool,
     ) -> Result<(), Error> {
-        // Iterate over each field mapping definition
-        for field in field_mapping {
-            match field {
-                Field::Single {
-                    name,
-                    parser: _,
-                    default_value: _,
-                } => {
-                    Self::process_flat_field(
-                        input_data,
-                        line_data,
-                        timeline_builder,
-                        timeline_fields,
-                        name,
-                        field.ignore(),
-                        root,
-                    );
-                }
-                Field::Multi(multi_input_field) => {
-                    Self::process_flat_field(
-                        input_data,
-                        line_data,
-                        timeline_builder,
-                        timeline_fields,
-                        &multi_input_field.output_field,
-                        field.ignore(),
-                        root,
-                    );
-                }
-                Field::Array(array_field) => {
-                    let inner_field = array_field.0.as_ref();
-                    Self::process_array_field_mapping(
-                        input_data,
-                        line_data,
-                        inner_field,
-                        timeline_builder,
-                        timeline_fields,
-                        force_snake_case,
-                    )?;
-                }
-                Field::Object {
-                    name,
-                    fields,
-                    ignore,
-                } => {
-                    Self::process_object_field_mapping(
-                        input_data,
-                        line_data,
-                        timeline_builder,
-                        timeline_fields,
-                        name,
-                        fields,
-                        *ignore,
-                        force_snake_case,
-                    )?;
-                }
-            }
-        }
+        let mut traversal = LineBuildTraversal {
+            line_data,
+            timeline_builder,
+            timeline_fields,
+        };
 
-        // Process any remaining unmapped fields from the input data
-        for (key, value) in input_data.drain() {
-            Self::process_unmapped_field(
-                key,
-                value,
-                line_data,
-                timeline_builder,
-                timeline_fields,
-                force_snake_case,
-            )?;
-        }
-
-        Ok(())
+        field_traversal::traverse_fields(
+            input_data,
+            field_mapping,
+            &mut traversal,
+            force_snake_case,
+            root,
+        )
     }
 
     /// Processes a single flat field mapping from the parser tree.
@@ -420,7 +440,7 @@ impl LineBuilder {
         timeline_builder: Option<&TimeLineBuilder>,
         timeline_fields: Option<&HashMap<String, TimelineField>>,
         field_name: &FieldName,
-        field_mapping: &Vec<Field>,
+        field_mapping: &[Field],
         ignore_parsing: bool,
         force_snake_case: bool,
     ) -> Result<(), Error> {
@@ -663,7 +683,7 @@ impl LineBuilder {
                     &mut inner_insert,
                     timeline_builder,
                     None,
-                    &vec![],
+                    &[],
                     force_snake_case,
                     true,
                 )?;
