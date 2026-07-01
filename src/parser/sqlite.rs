@@ -19,6 +19,7 @@ use rusqlite::Connection;
 /// * `configuration` - Run configuration parameters
 /// * `metadata` - Metadata associated with the run
 /// * `query` - SQL query to execute
+/// * `log_before_fail` - Error budget. Parsing stops after `num_errors > log_before_fail`.
 ///
 #[pyfunction]
 pub fn parse_sqlite(
@@ -165,11 +166,22 @@ fn process_row(
 #[cfg(test)]
 mod tests {
 
-    use std::{collections::HashMap, fs};
+    use std::{collections::HashMap, fs, path::Path};
 
-    use crate::OutputConfiguration;
+    use crate::{
+        Field, FieldMapping, FieldName, OutputConfiguration, Parser,
+        configuration::DataTypeMapping, date_util::DateInputCodec,
+    };
 
     use super::*;
+
+    fn remove_dir_if_exists(path: &Path) {
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
 
     #[test]
     fn test_sqlite() {
@@ -292,5 +304,77 @@ mod tests {
             additional_description,
             "app_activity_id: default$windows.data.input.devices.pensyncedsettings|windows.data.input.devices.pensyncedsettings - payload: UTBJQkFBSUJBQT09"
         );
+    }
+
+    #[test]
+    fn sqlite_parser_stops_after_error_budget_is_exceeded() {
+        let output_folder = Path::new(".tmp").join("sqlite_error_budget");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let db_path = output_folder.join("budget.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute("CREATE TABLE events (value TEXT)", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO events (value) VALUES ('1'), ('bad-one'), ('bad-two'), ('4')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let output_conf = OutputConfiguration::new(
+            "budget".to_string(),
+            output_folder.display().to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            false,
+            true,
+            HashMap::new(),
+        );
+        let run_config = RunConfiguration::new(vec![output_conf], true, None);
+        let mut params = HashMap::new();
+        params.insert("query".to_owned(), "SELECT value FROM events".to_owned());
+        let plugin_config = PluginConfiguration {
+            plugin: "sqlite-test".to_string(),
+            file_encoding: "UTF_8".to_string(),
+            data_type_configs: vec![DataTypeMapping {
+                data_type: "budget".to_string(),
+                description: None,
+                default_date_pattern: DateInputCodec::Iso(),
+                params,
+                timeline: None,
+                field_mapping: Some(FieldMapping::new(
+                    vec![Field::Single {
+                        name: FieldName::new("value".to_owned(), false, None, None, None),
+                        parser: Parser::Int(),
+                        default_value: None,
+                    }],
+                    None,
+                )),
+                has_primary_key: false,
+            }],
+        };
+
+        let report = parse_sqlite(
+            db_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+            1,
+        );
+
+        assert_eq!(report.num_errors, 2);
+        assert!(report.last_error.as_ref().unwrap().contains("Line 2"));
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+        let jsonl = fs::read_to_string(output_folder.join("budget.budget.jsonl")).unwrap();
+        let lines: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["value"], 1);
+
+        remove_dir_if_exists(&output_folder);
     }
 }

@@ -2,8 +2,9 @@ use crate::{Output, RunReport, output::OutputReport};
 
 /// Record an error and return true when parsing should stop.
 ///
-/// `log_before_fail` is an error budget: 0 stops after the first error, 1 allows
-/// one error and stops after the second, and so on.
+/// `log_before_fail` is an error budget used by parsers: parsing stops when
+/// `num_errors > log_before_fail`. A value of 0 stops after the first error, 1
+/// allows one error and stops after the second, and so on.
 pub(crate) fn record_error(
     report: &mut RunReport,
     error: impl Into<String>,

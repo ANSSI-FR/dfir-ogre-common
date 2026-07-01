@@ -27,7 +27,7 @@ const BUFFER_CAPACITY: usize = 1024 * 1024 * 5;
 /// * `run_config` - Configuration for the parsing run
 /// * `metadata` - Metadata associated with the input file
 /// * `log_config_file` - Path to the configuration file defining the parsing schema
-/// * `log_before_fail` - Number of errors to log before failing
+/// * `log_before_fail` - Error budget. Parsing stops after `num_errors > log_before_fail`.
 ///
 #[pyfunction]
 pub fn parse_regexp(
@@ -63,7 +63,7 @@ pub fn parse_regexp(
 /// * `run_config` - Configuration for the parsing run
 /// * `metadata` - Metadata associated with the input file
 /// * `csv_config_file` - Path to the configuration file defining the parsing schema
-/// * `log_before_fail` - Number of errors to log before failing
+/// * `log_before_fail` - Error budget. Parsing stops after `num_errors > log_before_fail`.
 ///
 fn parse(
     input_file: &str,

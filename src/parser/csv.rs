@@ -21,7 +21,7 @@ const BUFFER_CAPACITY: usize = 1024 * 1024 * 5;
 /// * `metadata` - Metadata associated with the parsing operation
 /// * `csv_config_file` - Path to the CSV mapping file
 /// * `python_mapping` - A mapping of column names to Python functions for data transformation
-/// * `log_before_fail` - Number of rows to log before returning an error
+/// * `log_before_fail` - Error budget. Parsing stops after `num_errors > log_before_fail`.
 ///
 /// # Returns
 ///
@@ -129,14 +129,14 @@ fn parse(
 ///
 /// This function iterates through each line of the CSV file, parses the data according to
 /// the given converters, and writes it to the output. It handles errors gracefully by logging
-/// them or returning an error based on `log_before_fail`.
+/// them or stopping when `num_errors > log_before_fail`.
 ///
 /// # Arguments
 ///
 /// * `reader` - A mutable reference to the CSV reader to read lines from.
 /// * `converters` - A mutable vector of field parsers used to convert each field.
 /// * `output` - A mutable reference to the output handler where parsed data is written.
-/// * `log_before_fail` - The number of errors to log before returning an error.
+/// * `log_before_fail` - Error budget. Parsing stops after `num_errors > log_before_fail`.
 ///
 fn parse_lines(
     mut reader: csv::Reader<Box<dyn Read>>,
@@ -819,9 +819,10 @@ mod tests {
 
     /// Tests the parsing of an NTFSInfo CSV file with best-effort error handling.
     ///
-    /// - When `log_before_fail` is 0, parsing fails immediately upon encountering an error
-    /// - When `log_before_fail` is 1, one error is logged and parsing continues until a second error occurs
-    /// - When `log_before_fail` is 2, two errors are logged and parsing continues
+    /// Parsing stops when `num_errors > log_before_fail`.
+    /// - When `log_before_fail` is 0, parsing stops after the first error
+    /// - When `log_before_fail` is 1, one error is allowed and parsing stops after the second
+    /// - When `log_before_fail` is 2, two errors are allowed and parsing stops after the third
     #[test]
     fn ntfs_info_best_effort() {
         let output_folder = ".tmp";
