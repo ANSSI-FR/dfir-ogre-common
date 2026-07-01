@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs};
 
 use crate::{
     DateInputCodec, Error, Field, FieldMapping, FieldName, FieldParserTree, MultiInputField,
-    MultiParser, Parser, Qualifiers, TimeLineBuilder, TimeLineType,
+    MultiParser, Parser, TimeLineBuilder, TimeLineType,
     field::{ArrayField, ParserExtension, PyParser},
     timeline::{ConditionalDescriptionConf, TimelineDisplayOptions},
 };
@@ -36,7 +36,6 @@ impl PluginConfiguration {
         python: Option<HashMap<String, Py<PyAny>>>,
         extension: Option<HashMap<String, ParserExtension>>,
     ) -> Result<Self, Error> {
-        let qualifiers = Qualifiers::new();
         let root = Element::parse(xml.as_bytes())?;
         if !root.name.eq("plugin") {
             return Err(Error::ConfigurationError(format!(
@@ -62,7 +61,7 @@ impl PluginConfiguration {
             if let Some(element) = xml_node.as_element()
                 && element.name.eq("mapping")
             {
-                let mapping = parse_mapping(element, &qualifiers, &python, &extension)?;
+                let mapping = parse_mapping(element, &python, &extension)?;
                 mappings.push(mapping);
             }
         }
@@ -166,7 +165,6 @@ pub struct DataTypeMapping {
 
 fn parse_mapping(
     node: &Element,
-    qualifiers: &Qualifiers,
     python: &HashMap<String, Py<PyAny>>,
     extension: &HashMap<String, ParserExtension>,
 ) -> Result<DataTypeMapping, Error> {
@@ -199,7 +197,6 @@ fn parse_mapping(
                         if let Some(elem) = node.as_element() {
                             let field = parse_field_node(
                                 elem,
-                                qualifiers,
                                 &config.default_date_pattern,
                                 python,
                                 extension,
@@ -462,7 +459,6 @@ fn parse_timeline_otherwise_descr(
 
 fn parse_field_node(
     elem: &Element,
-    qualifiers: &Qualifiers,
     default_date_pattern: &DateInputCodec,
     python: &HashMap<String, Py<PyAny>>,
     extension: &HashMap<String, ParserExtension>,
@@ -471,7 +467,6 @@ fn parse_field_node(
     match elem.name.as_str() {
         "field" => parse_field(
             elem,
-            qualifiers,
             default_date_pattern,
             python,
             extension,
@@ -479,7 +474,6 @@ fn parse_field_node(
         ),
         "array" => parse_array(
             elem,
-            qualifiers,
             default_date_pattern,
             python,
             extension,
@@ -487,7 +481,6 @@ fn parse_field_node(
         ),
         "object" => parse_object(
             elem,
-            qualifiers,
             default_date_pattern,
             python,
             extension,
@@ -495,7 +488,6 @@ fn parse_field_node(
         ),
         "multi_input" => parse_multi_input(
             elem,
-            qualifiers,
             default_date_pattern,
             python,
             extension,
@@ -510,13 +502,12 @@ fn parse_field_node(
 
 fn parse_field(
     elem: &Element,
-    qualifiers: &Qualifiers,
     default_date_pattern: &DateInputCodec,
     python: &HashMap<String, Py<PyAny>>,
     extension: &HashMap<String, ParserExtension>,
     contains_primary_key: &mut bool,
 ) -> Result<Field, Error> {
-    let name = parse_field_name(elem, qualifiers)?;
+    let name = parse_field_name(elem)?;
     if name.primary_key {
         *contains_primary_key = true;
     }
@@ -539,7 +530,7 @@ fn parse_field(
     })
 }
 
-fn parse_field_name(elem: &Element, qualifiers: &Qualifiers) -> Result<FieldName, Error> {
+fn parse_field_name(elem: &Element) -> Result<FieldName, Error> {
     let attributes = &elem.attributes;
     let input_name = attribute("input", elem)?;
     let primary_key = attributes.get("primary_key").cloned();
@@ -548,12 +539,6 @@ fn parse_field_name(elem: &Element, qualifiers: &Qualifiers) -> Result<FieldName
 
     let output_name = attributes.get("output").cloned();
 
-    let qualifier = attributes.get("qualifier").cloned();
-    let qualifier = match qualifier {
-        Some(name) => Some(qualifiers.get(&name)?.to_string()),
-        None => None,
-    };
-
     let display_name = attributes.get("display_name").cloned();
 
     let description = attributes.get("description").cloned();
@@ -561,7 +546,7 @@ fn parse_field_name(elem: &Element, qualifiers: &Qualifiers) -> Result<FieldName
         input_name,
         primary_key,
         output_name,
-        qualifier,
+        None,
         display_name,
         description,
     ))
@@ -569,20 +554,18 @@ fn parse_field_name(elem: &Element, qualifiers: &Qualifiers) -> Result<FieldName
 
 fn parse_object(
     elem: &Element,
-    qualifiers: &Qualifiers,
     default_date_pattern: &DateInputCodec,
     python: &HashMap<String, Py<PyAny>>,
     extension: &HashMap<String, ParserExtension>,
     contains_primary_key: &mut bool,
 ) -> Result<Field, Error> {
     let attributes = &elem.attributes;
-    let field_name = parse_field_name(elem, qualifiers)?;
+    let field_name = parse_field_name(elem)?;
     let mut fields = Vec::with_capacity(elem.children.len());
     for node in &elem.children {
         if let Some(elem) = node.as_element() {
             let field = parse_field_node(
                 elem,
-                qualifiers,
                 default_date_pattern,
                 python,
                 extension,
@@ -607,7 +590,6 @@ fn parse_object(
 
 fn parse_array(
     elem: &Element,
-    qualifiers: &Qualifiers,
     default_date_pattern: &DateInputCodec,
     python: &HashMap<String, Py<PyAny>>,
     extension: &HashMap<String, ParserExtension>,
@@ -632,7 +614,6 @@ fn parse_array(
 
     let field = parse_field_node(
         elem,
-        qualifiers,
         default_date_pattern,
         python,
         extension,
@@ -644,7 +625,6 @@ fn parse_array(
 
 fn parse_multi_input(
     elem: &Element,
-    qualifiers: &Qualifiers,
     default_date_pattern: &DateInputCodec,
     python: &HashMap<String, Py<PyAny>>,
     extension: &HashMap<String, ParserExtension>,
@@ -652,18 +632,13 @@ fn parse_multi_input(
 ) -> Result<Field, Error> {
     let attributes = &elem.attributes;
     let output_name = attribute("output", elem)?;
-    let qualifier = attributes.get("qualifier").cloned();
-    let qualifier = match qualifier {
-        Some(name) => Some(qualifiers.get(&name)?.to_string()),
-        None => None,
-    };
     let display_name = attributes.get("display_name").cloned();
     let description = attributes.get("description").cloned();
     let output_field = FieldName::new(
         output_name.clone(),
         false,
         Some(output_name),
-        qualifier,
+        None,
         display_name,
         description,
     );
@@ -689,7 +664,6 @@ fn parse_multi_input(
         if let Some(elem) = node.as_element() {
             let field = parse_field_node(
                 elem,
-                qualifiers,
                 default_date_pattern,
                 python,
                 extension,
@@ -942,6 +916,37 @@ mod tests {
         );
 
         assert!(message.contains("at least one DataTypeMapping"));
+    }
+
+    #[test]
+    fn from_str_accepts_free_form_qualifier_attributes() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Test">
+   <mapping data_type="test">
+      <fields>
+         <field input="Known" output="known" parser="String" qualifier="DATE_CREATION" />
+         <object input="Container" output="container" qualifier="ANY_OBJECT_LABEL">
+            <field input="Child" output="child" parser="String" qualifier="ANY_CHILD_LABEL" />
+         </object>
+         <multi_input output="joined" qualifier="ANY_MULTI_LABEL" parser="Join" separator="-">
+            <field input="First" parser="String" qualifier="ANY_FIRST_LABEL" />
+            <field input="Second" parser="String" qualifier="ANY_SECOND_LABEL" />
+         </multi_input>
+      </fields>
+   </mapping>
+</plugin>"#;
+
+        let config = PluginConfiguration::from_str(xml, None, None).unwrap();
+        let mapping = config.data_type_configs[0]
+            .field_mapping
+            .as_ref()
+            .expect("field mapping");
+
+        let output_fields = &mapping.field_parser_tree.output_fields;
+        assert_eq!(output_fields.len(), 3);
+        assert_eq!(output_fields[0].output_name(), "known");
+        assert_eq!(output_fields[1].output_name(), "container");
+        assert_eq!(output_fields[2].output_name(), "joined");
     }
 
     #[test]
