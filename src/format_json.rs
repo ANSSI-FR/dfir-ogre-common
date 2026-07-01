@@ -250,6 +250,12 @@ impl JsonFormatter {
     ///
     pub fn close(&mut self) -> Result<(), Error> {
         self.data_writer.close()?;
+        if let Some(writer) = &mut self.metadata_writer {
+            writer.close()?
+        }
+        if let Some(writer) = &mut self.timeline_writer {
+            writer.close()?
+        }
         Ok(())
     }
 }
@@ -410,6 +416,60 @@ mod tests {
         assert_eq!(data_json["greetings"], "Hello");
         assert!(data_json["ogre_md_id"].as_str().unwrap().len() > 10);
         assert!(data_json["ogre_id"].as_str().unwrap().len() > 10);
+
+        remove_if_exists(&data_path);
+        remove_if_exists(&metadata_path);
+    }
+
+    #[test]
+    fn normalized_gzip_close_finishes_metadata_stream() {
+        std::fs::create_dir_all(TMP_FOLDER).unwrap();
+        let data_path = Path::new(TMP_FOLDER).join("test_normalized_json_gz.jsonl.gz");
+        let metadata_path = Path::new(TMP_FOLDER).join("ogre_metadata.jsonl.gz");
+        remove_if_exists(&data_path);
+        remove_if_exists(&metadata_path);
+
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("host-json-gz".into()),
+            None,
+            FieldMapping::new(vec![], None),
+            true,
+            false,
+            true,
+        );
+        let mut output = JsonFormatter::new(
+            OutputType::Gzip,
+            TMP_FOLDER,
+            "test_normalized_json_gz",
+            DateOutputCodec::Iso(),
+            false,
+            false,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            true,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("greetings", Value::String("Hello".to_owned()));
+        line_builder.build(&mut record).unwrap();
+
+        output.write_metadata(&line_builder).unwrap();
+        output.write_normalized(&line_builder).unwrap();
+        output.close().unwrap();
+
+        let mut metadata_decoder = GzDecoder::new(File::open(&metadata_path).unwrap());
+        let mut metadata = String::new();
+        metadata_decoder.read_to_string(&mut metadata).unwrap();
+        let metadata_json: serde_json::Value = serde_json::from_str(metadata.trim()).unwrap();
+        assert_eq!(metadata_json["computer"], "host-json-gz");
+
+        let mut data_decoder = GzDecoder::new(File::open(&data_path).unwrap());
+        let mut data = String::new();
+        data_decoder.read_to_string(&mut data).unwrap();
+        let data_json: serde_json::Value = serde_json::from_str(data.trim()).unwrap();
+        assert_eq!(data_json["greetings"], "Hello");
 
         remove_if_exists(&data_path);
         remove_if_exists(&metadata_path);

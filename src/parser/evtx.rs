@@ -1,6 +1,8 @@
 use crate::{
     FieldParserTree, Metadata, Output, Parser, Record, RunConfiguration, RunReport, Value,
-    configuration::PluginConfiguration, errors::Error, parser::json::parse_json_object,
+    configuration::PluginConfiguration,
+    errors::Error,
+    parser::{json::parse_json_object, runner},
 };
 use chrono::DateTime;
 use evtx::{EvtxParser, ParserSettings, SerializedEvtxRecord};
@@ -65,7 +67,7 @@ pub fn parse(
         tuple.clear();
     }
 
-    report.add_output_report(output.get_report());
+    runner::finalize_output(&mut output, &mut report);
     Ok(report)
 }
 
@@ -111,12 +113,151 @@ fn get_event(mut record: SerializedEvtxRecord<JsonValue>) -> Result<JsonValue, E
 
 #[cfg(test)]
 mod tests {
-    use crate::OutputConfiguration;
+    use crate::{
+        DateInputCodec, Field, FieldMapping, FieldName, OutputConfiguration, Parser,
+        TimeLineBuilder, TimeLineType, configuration::DataTypeMapping,
+    };
 
     use super::*;
-    use std::{collections::HashMap, fs, path::Path};
+    use std::{
+        collections::HashMap,
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use serde_json::Value;
+
+    fn remove_dir_if_exists(path: &Path) {
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
+    fn test_folder(name: &str) -> PathBuf {
+        let path = Path::new(".tmp").join(name);
+        remove_dir_if_exists(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn evtx_nested_system_time_plugin_config() -> PluginConfiguration {
+        let field_mapping = FieldMapping::new(
+            vec![
+                Field::Single {
+                    name: FieldName::new("timestamp".to_owned(), false, None, None, None),
+                    parser: Parser::Ignore(),
+                    default_value: None,
+                },
+                Field::Object {
+                    name: FieldName::new(
+                        "System".to_owned(),
+                        false,
+                        Some("system".to_owned()),
+                        None,
+                        None,
+                    ),
+                    ignore: false,
+                    fields: vec![Field::Object {
+                        name: FieldName::new(
+                            "TimeCreated_attributes".to_owned(),
+                            false,
+                            Some("time_created".to_owned()),
+                            None,
+                            None,
+                        ),
+                        ignore: false,
+                        fields: vec![Field::Single {
+                            name: FieldName::new(
+                                "SystemTime".to_owned(),
+                                false,
+                                Some("system_time".to_owned()),
+                                Some("Nested EVTX System Time".to_owned()),
+                                None,
+                            ),
+                            parser: Parser::DateTime(DateInputCodec::Iso()),
+                            default_value: None,
+                        }],
+                    }],
+                },
+            ],
+            Some(Parser::Ignore()),
+        );
+
+        PluginConfiguration {
+            plugin: "evtx-test".to_string(),
+            file_encoding: "UTF_8".to_string(),
+            data_type_configs: vec![DataTypeMapping {
+                data_type: "evtx_nested_time".to_string(),
+                description: None,
+                default_date_pattern: DateInputCodec::Iso(),
+                params: HashMap::new(),
+                timeline: Some(TimeLineBuilder::new(
+                    TimeLineType::Standard,
+                    "evtx_nested_time".to_string(),
+                    0,
+                    None,
+                    None,
+                )),
+                field_mapping: Some(field_mapping),
+                has_primary_key: false,
+            }],
+        }
+    }
+
+    #[test]
+    fn evtx_nested_system_time_string_mapping_emits_timeline_record() {
+        let output_folder = test_folder("evtx_nested_system_time_string_timeline");
+        let output_conf = OutputConfiguration::new(
+            "evtx_nested_time".to_string(),
+            output_folder.display().to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            true,
+            true,
+            HashMap::new(),
+        );
+        let configuration = RunConfiguration::new(vec![output_conf], true, None);
+        let plugin_config = evtx_nested_system_time_plugin_config();
+
+        let report = parse_evtx(
+            "test_data/evtx/kernel_pnp.evtx",
+            configuration,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 123);
+
+        let jsonl =
+            fs::read_to_string(output_folder.join("evtx_nested_time.evtx_nested_time.jsonl"))
+                .unwrap();
+        let lines: Vec<Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 123);
+
+        let line = lines[3].as_object().unwrap();
+        assert_eq!(
+            line.get("timestamp").unwrap().as_str().unwrap(),
+            "2016-04-26T21:30:13.589912+00:00"
+        );
+        assert_eq!(
+            line.get("timestamp_meaning").unwrap().as_str().unwrap(),
+            "Nested EVTX System Time"
+        );
+        assert_eq!(
+            line.get("data").unwrap()["system"]["time_created"]["system_time"],
+            "2016-04-26T21:30:13.589912+00:00"
+        );
+
+        remove_dir_if_exists(&output_folder);
+    }
+
     #[test]
     fn evtx() {
         let output_folder = ".tmp";

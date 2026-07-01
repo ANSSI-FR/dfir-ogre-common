@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path};
 
 use crate::{
     Error, FieldMapping, Metadata, Output, Record, RunConfiguration, RunReport, Value,
-    configuration::PluginConfiguration, windows_utils::convert_sid,
+    configuration::PluginConfiguration, parser::runner, windows_utils::convert_sid,
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as enc64};
@@ -167,12 +167,12 @@ impl SrumParser {
                         let error = format!("SRUM Table:'{}', Error: {e}", &srum_table.name,);
                         warn!("{error}");
 
-                        let mut report = output.get_report();
+                        let mut report = runner::finalized_output_report(&mut output);
                         report.last_error = Some(error);
                         report.num_errors += 1;
                         run_report.add_output_report(report);
                     } else {
-                        run_report.add_output_report(output.get_report());
+                        run_report.add_output_report(runner::finalized_output_report(&mut output));
                     }
                 }
                 Err(e) => {

@@ -48,8 +48,9 @@ impl Value {
             if pos != 0 {
                 buffer.push(',');
             }
+            let escaped = escape_special_chars(key);
             buffer.push('\"');
-            buffer.push_str(key);
+            buffer.push_str(&escaped);
             buffer.push_str("\":");
             Value::json_serialise_value(el, buffer, date_codec, include_empty)?;
             pos += 1;
@@ -310,9 +311,9 @@ pub fn escape_special_chars(v: &str) -> String {
             '\n' => result.push_str("\\n"),
             '\r' => continue, // skip \r
             '\t' => result.push_str("\\t"),
-            '\x08' => result.push_str("\\b"), // backspace
-            '\x0C' => result.push_str("\\f"), // form feed
-            '\x0B' => result.push_str("\\v"), // vertical tab
+            '\x08' => result.push_str("\\b"),     // backspace
+            '\x0C' => result.push_str("\\f"),     // form feed
+            '\x0B' => result.push_str("\\u000B"), // vertical tab
             '\u{0000}'..='\u{001F}' | '\u{007F}' => {
                 // Escape all C0 and DEL control chars
                 result.push_str("\\u");
@@ -343,12 +344,25 @@ mod tests {
             ("carriage\rreturn", "carriagereturn"), // \r is dropped
             ("\x0C", "\\f"),
             ("\x08", "\\b"),
-            ("\x0B", "\\v"),
+            ("\x0B", "\\u000B"),
             ("\x01", "\\u0001"),
         ];
         for (input, expected) in cases {
             assert_eq!(escape_special_chars(&input.to_string()), expected);
         }
+    }
+
+    #[test]
+    fn json_serialise_record_escapes_object_keys() {
+        let key = "bad\"key\n\t\u{0001}\u{000B}";
+        let mut record = Record::new();
+        record.add(key, Value::String("value".to_string()));
+
+        let mut buffer = String::new();
+        Value::json_serialise_record(&record, &mut buffer, &DateOutputCodec::Iso(), true).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed[key], "value");
     }
 
     // ---------------------------------------------------------------------

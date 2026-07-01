@@ -5,7 +5,7 @@ use std::{fs::File, path::Path};
 
 use crate::{
     Error, FieldParserTree, Metadata, Output, Record, RunConfiguration, RunReport, Value,
-    configuration::PluginConfiguration, field_mapping,
+    configuration::PluginConfiguration, field_mapping, parser::runner,
 };
 
 use pyo3::prelude::*;
@@ -89,7 +89,7 @@ pub fn parse(
             };
         }
     }
-    run_report.add_output_report(output.get_report());
+    runner::finalize_output(&mut output, &mut run_report);
     Ok(run_report)
 }
 

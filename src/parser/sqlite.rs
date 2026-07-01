@@ -1,6 +1,6 @@
 use crate::{
     Error, Metadata, Output, Record, RunConfiguration, RunReport, Value,
-    configuration::PluginConfiguration, field_mapping::FieldParserTree,
+    configuration::PluginConfiguration, field_mapping::FieldParserTree, parser::runner,
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as enc64};
@@ -92,15 +92,18 @@ pub fn parse(
         ) {
             record.clear();
 
-            report.add_error(format!("Line {num_row}, error: {err}"));
-            if report.num_errors >= log_before_fail {
+            if runner::record_error(
+                &mut report,
+                format!("Line {num_row}, error: {err}"),
+                log_before_fail,
+            ) {
                 break;
             }
         }
         num_row += 1;
     }
 
-    report.add_output_report(output.get_report());
+    runner::finalize_output(&mut output, &mut report);
     Ok(report)
 }
 

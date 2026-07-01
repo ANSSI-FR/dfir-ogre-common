@@ -209,6 +209,13 @@ impl Output {
         };
         Ok(data_type_conf)
     }
+
+    pub(crate) fn finalize(&mut self) -> Result<(), Error> {
+        for out in &mut self.outputs {
+            out.close()?;
+        }
+        Ok(())
+    }
 }
 
 #[pymethods]
@@ -372,9 +379,7 @@ impl Output {
 
     /// Exit the context, ensuring each writer is cleanly closed.
     pub fn __exit__(&mut self, _exc_type: Py<PyAny>, _exc_value: Py<PyAny>, _traceback: Py<PyAny>) {
-        for out in &mut self.outputs {
-            let _ = out.close();
-        }
+        let _ = self.finalize();
     }
 
     pub fn get_report(&self) -> OutputReport {

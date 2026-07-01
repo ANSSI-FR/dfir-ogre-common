@@ -11,6 +11,7 @@ use crate::{
     Value,
     configuration::{PluginConfiguration, encoding_reader_builder},
     field_mapping::ParserType,
+    parser::runner,
 };
 use regex::Regex;
 const BUFFER_CAPACITY: usize = 1024 * 1024 * 5;
@@ -176,9 +177,8 @@ fn parse(
                 &fail_policy,
             )
         {
-            run_report.add_error(e.to_string());
             record.clear();
-            if run_report.num_errors >= log_before_fail {
+            if runner::record_error(&mut run_report, e.to_string(), log_before_fail) {
                 break;
             }
         }
@@ -190,7 +190,7 @@ fn parse(
     if !record.0.is_empty() {
         output.write(&mut record)?;
     }
-    run_report.add_output_report(output.get_report());
+    runner::finalize_output(&mut output, &mut run_report);
     Ok(run_report)
 }
 
@@ -486,6 +486,34 @@ mod tests {
                 .contains("Invalid policy")
         );
         assert_eq!(report.num_errors, 1);
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn fail_policy_allows_configured_error_budget_before_stopping() {
+        let output_folder = Path::new(".tmp").join("regexp_error_budget");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("budget.log");
+        fs::write(&input_path, "invalid-one\ninvalid-two\ninvalid-three\n").unwrap();
+        let regex = r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<level>INFO|WARN) (?P<message>.*)";
+        let run_config = RunConfiguration::new(
+            vec![regexp_output_conf("budget", &output_folder)],
+            true,
+            None,
+        );
+
+        let report = parse_regexp(
+            input_path.to_str().unwrap(),
+            run_config,
+            regexp_plugin_config(regex, "Fail"),
+            Metadata::new("test".into()),
+            1,
+        );
+
+        assert_eq!(report.num_errors, 2);
+        assert!(report.last_error.as_ref().unwrap().contains("line:'1'"));
 
         remove_dir_if_exists(&output_folder);
     }

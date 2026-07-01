@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 use crate::{
     Error, FieldParser, Metadata, Output, Record, RunConfiguration, RunReport,
     configuration::{PluginConfiguration, encoding_reader_builder},
+    parser::runner,
 };
 const BUFFER_CAPACITY: usize = 1024 * 1024 * 5;
 
@@ -116,7 +117,7 @@ fn parse(
         log_before_fail,
         &mut run_report,
     );
-    run_report.add_output_report(output.get_report());
+    runner::finalize_output(&mut output, &mut run_report);
 
     Ok(run_report)
 }
@@ -151,8 +152,11 @@ fn parse_lines(
                         Some(converter) => {
                             if let Err(e) = converter.parse(Some(data), &mut tuple) {
                                 let err = Error::ParsingColumn(line_nb + 1, e.to_string(), column);
-                                run_report.add_error(err.to_string());
-                                if run_report.num_errors > log_before_fail {
+                                if runner::record_error(
+                                    run_report,
+                                    err.to_string(),
+                                    log_before_fail,
+                                ) {
                                     return;
                                 }
                             }
@@ -163,8 +167,7 @@ fn parse_lines(
                 if let Err(e) = output.write(&mut tuple) {
                     let err = Error::ParsingLine(line_nb + 1, e.to_string());
                     tuple.clear();
-                    run_report.add_error(err.to_string());
-                    if run_report.num_errors > log_before_fail {
+                    if runner::record_error(run_report, err.to_string(), log_before_fail) {
                         break;
                     }
                 }
@@ -172,8 +175,7 @@ fn parse_lines(
             Err(e) => {
                 let err = Error::ParsingLine(line_nb + 1, e.to_string());
                 tuple.clear();
-                run_report.add_error(err.to_string());
-                if run_report.num_errors > log_before_fail {
+                if runner::record_error(run_report, err.to_string(), log_before_fail) {
                     break;
                 }
             }

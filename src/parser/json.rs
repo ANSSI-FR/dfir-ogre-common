@@ -3,8 +3,8 @@ use std::{fs::File, path::Path};
 
 use crate::field_mapping::ParserType;
 use crate::{
-    Error, FieldParserTree, Metadata, Output, Parser, Record, RunConfiguration, RunReport, Value,
-    configuration::PluginConfiguration,
+    Error, FieldParser, FieldParserTree, Metadata, Output, Parser, Record, RunConfiguration,
+    RunReport, Value, configuration::PluginConfiguration, parser::runner,
 };
 
 use pyo3::prelude::*;
@@ -77,7 +77,7 @@ fn parse_json_internal(
         &mut report,
     );
 
-    report.add_output_report(output.get_report());
+    runner::finalize_output(&mut output, &mut report);
     Ok(report)
 }
 
@@ -123,7 +123,7 @@ fn parse_jsonl_internal(
         }
         record.clear();
     }
-    report.add_output_report(output.get_report());
+    runner::finalize_output(&mut output, &mut report);
     Ok(report)
 }
 
@@ -152,6 +152,34 @@ fn parse(
     }
 }
 
+fn parse_mapped_string_field(
+    input_name: &str,
+    value: &str,
+    parser_tree: &FieldParserTree,
+    record: &mut Record,
+) -> Result<bool, Error> {
+    match parser_tree.parsers.get(input_name) {
+        Some(ParserType::Field { parser }) => {
+            parser.parse(Some(value), record)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn mapped_array_field_parser<'a>(
+    input_name: &str,
+    parser_tree: Option<&'a FieldParserTree>,
+) -> Option<&'a FieldParser> {
+    match parser_tree.and_then(|tree| tree.parsers.get(input_name)) {
+        Some(ParserType::Array { field }) => match field.0.as_ref() {
+            ParserType::Field { parser } => Some(parser),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub fn parse_json_object(
     json: Map<String, JsonValue>,
     parser_tree: Option<&FieldParserTree>,
@@ -161,6 +189,12 @@ pub fn parse_json_object(
     for (name, json_value) in json {
         match parser_tree {
             Some(p_tree) => {
+                if let JsonValue::String(value) = &json_value
+                    && parse_mapped_string_field(&name, value, p_tree, record)?
+                {
+                    continue;
+                }
+
                 let value_opt = get_values(&name, json_value, Some(p_tree), parse_unknown)?;
                 if let Some(value) = value_opt {
                     p_tree.set_field_value(&name, value, record)?;
@@ -211,9 +245,17 @@ fn get_values(
             }
         }
         JsonValue::Array(values) => {
+            let array_parser = mapped_array_field_parser(input_name, parser_tree);
             let mut val_array = Vec::with_capacity(values.len());
             for json_value in values {
-                let value_opt = get_values(input_name, json_value, parser_tree, parse_unknown)?;
+                let value_opt = match (json_value, array_parser) {
+                    (JsonValue::String(value), Some(parser)) => {
+                        parser.parse_into_value(Some(&value))?
+                    }
+                    (json_value, _) => {
+                        get_values(input_name, json_value, parser_tree, parse_unknown)?
+                    }
+                };
                 if let Some(value) = value_opt {
                     val_array.push(value);
                 }
@@ -536,6 +578,131 @@ mod tests {
         let line: serde_json::Value = serde_json::from_str(jsonl.trim()).unwrap();
         assert!(line.get("details").is_none());
         assert_eq!(line["ogre_md"]["computer"], "test");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn json_string_primitives_apply_configured_parsers_without_coercing_native_values() {
+        let output_folder = test_folder("json_string_primitives_configured_parsers");
+        let input_path = output_folder.join("input.json");
+        fs::write(
+            &input_path,
+            r#"{
+                "string_int": "42",
+                "string_bool": "false",
+                "native_int": 7,
+                "native_bool": true
+            }"#,
+        )
+        .unwrap();
+
+        let field_mapping = FieldMapping::new(
+            vec![
+                Field::Single {
+                    name: FieldName::new(
+                        "string_int".to_owned(),
+                        false,
+                        Some("parsed_int".to_owned()),
+                        None,
+                        None,
+                    ),
+                    parser: Parser::Int(),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new(
+                        "string_bool".to_owned(),
+                        false,
+                        Some("parsed_bool".to_owned()),
+                        None,
+                        None,
+                    ),
+                    parser: Parser::Bool(),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("native_int".to_owned(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("native_bool".to_owned(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+            ],
+            None,
+        );
+        let run_config =
+            RunConfiguration::new(vec![output_conf("primitive", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_edge", field_mapping);
+
+        let report = parse_json(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+        let jsonl = fs::read_to_string(output_folder.join("primitive.json_edge.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(jsonl.trim()).unwrap();
+        assert_eq!(line["parsed_int"], 42);
+        assert_eq!(line["parsed_bool"], false);
+        assert_eq!(line["native_int"], 7);
+        assert_eq!(line["native_bool"], true);
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn json_date_string_mapping_emits_timeline_record() {
+        let output_folder = test_folder("json_date_string_timeline");
+        let output_conf = OutputConfiguration::new(
+            "json_timeline".to_string(),
+            output_folder.display().to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            true,
+            true,
+            HashMap::new(),
+        );
+        let run_config = RunConfiguration::new(vec![output_conf], true, None);
+        let xml = fs::read_to_string("test_data/json/json.xml").unwrap();
+        let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
+
+        let report = parse_json(
+            "test_data/json/json_file.json",
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+        let jsonl =
+            fs::read_to_string(output_folder.join("json_timeline.json_test.jsonl")).unwrap();
+        let lines: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 1);
+        let line = lines[0].as_object().unwrap();
+        assert_eq!(
+            line.get("timestamp").unwrap().as_str().unwrap(),
+            "2016-04-26T21:30:13.520562+00:00"
+        );
+        assert_eq!(
+            line.get("timestamp_meaning").unwrap().as_str().unwrap(),
+            "System Time"
+        );
+        assert_eq!(
+            line.get("data").unwrap()["system"]["time_created"]["system_time"],
+            "2016-04-26T21:30:13.520562+00:00"
+        );
 
         remove_dir_if_exists(&output_folder);
     }

@@ -157,6 +157,9 @@ pub enum Error {
     #[error("'{0}'")]
     ConfigurationError(String),
 
+    #[error("Archive extraction path escapes output folder: '{0}'")]
+    UnsafeArchivePath(String),
+
     #[error("Failed to parse '{0}': invalid byte lenght")]
     InvalidByteLenght(String),
 

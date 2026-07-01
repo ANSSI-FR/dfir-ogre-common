@@ -1,9 +1,34 @@
-use std::{collections::HashMap, fs::File, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use pyo3::prelude::*;
 use sevenz_rust2::{Archive, BlockDecoder, Password};
 
 use crate::Error;
+
+fn safe_output_path(output_folder: &Path, output_name: &str) -> Result<PathBuf, Error> {
+    if output_name.is_empty()
+        || output_name.starts_with('/')
+        || output_name.starts_with('\\')
+        || output_name.contains(':')
+    {
+        return Err(Error::UnsafeArchivePath(output_name.to_owned()));
+    }
+
+    let mut path = output_folder.to_path_buf();
+    for segment in output_name.split(['/', '\\']) {
+        match segment {
+            "" | "." => {}
+            ".." => return Err(Error::UnsafeArchivePath(output_name.to_owned())),
+            segment => path.push(segment),
+        }
+    }
+
+    Ok(path)
+}
 
 /// Holds a mapping from an archive entry path to the desired output filename.
 #[derive(Debug, Default)]
@@ -57,6 +82,14 @@ pub fn extract_7z_files(
 
     let block_count = archive.blocks.len();
     let output_folder = PathBuf::from(output_folder);
+    let mut destinations = HashMap::with_capacity(files.0.len());
+    for (entry_name, output_name) in &files.0 {
+        destinations.insert(
+            entry_name.as_str(),
+            safe_output_path(&output_folder, output_name)?,
+        );
+    }
+
     for block_index in 0..block_count {
         let decoder = BlockDecoder::new(1, block_index, &archive, &password, &mut file);
         decoder.for_each_entries(&mut |entry, reader| {
@@ -64,10 +97,9 @@ pub fn extract_7z_files(
 
             // If the entry is requested, extract it to the destination path.
             // Otherwise, simply consume the data to keep the stream in sync.
-            match files.0.get(entry_name) {
-                Some(output_name) => {
-                    let dest = output_folder.join(output_name);
-                    sevenz_rust2::default_entry_extract_fn(entry, reader, &dest)?;
+            match destinations.get(entry_name) {
+                Some(dest) => {
+                    sevenz_rust2::default_entry_extract_fn(entry, reader, dest)?;
                 }
                 None => {
                     std::io::copy(reader, &mut std::io::sink())?;
@@ -103,6 +135,8 @@ pub fn extract_7z_file(
     let archive = Archive::read(&mut file, &password)?;
 
     let block_count = archive.blocks.len();
+    let output_folder = PathBuf::from(output_folder);
+    let dest = safe_output_path(&output_folder, filename)?;
 
     for block_index in 0..block_count {
         let decoder = BlockDecoder::new(1, block_index, &archive, &password, &mut file);
@@ -115,12 +149,10 @@ pub fn extract_7z_file(
             // skip the folder if it does not contain the file we want
             continue;
         }
-        let output_folder = PathBuf::from(output_folder);
 
         decoder.for_each_entries(&mut |entry, reader| {
             if entry.name() == filename {
                 //only extract the file we want
-                let dest = output_folder.join(entry.name());
                 sevenz_rust2::default_entry_extract_fn(entry, reader, &dest)?;
             } else {
                 //skip other files
@@ -138,6 +170,42 @@ mod tests {
     use super::*;
     use std::{fs, path::Path};
     pub const TMP_FOLDER: &str = ".tmp";
+
+    #[test]
+    fn safe_output_path_rejects_escape_attempts() {
+        let output_folder = Path::new("output");
+
+        for output_name in [
+            "../escaped.csv",
+            "nested/../../escaped.csv",
+            "/tmp/escaped.csv",
+            "\\\\server\\share\\escaped.csv",
+            "C:\\temp\\escaped.csv",
+            "file.txt:stream",
+        ] {
+            assert!(
+                matches!(
+                    safe_output_path(output_folder, output_name),
+                    Err(Error::UnsafeArchivePath(_))
+                ),
+                "expected {output_name:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_output_path_allows_nested_relative_paths() {
+        let output_folder = Path::new("output");
+
+        assert_eq!(
+            safe_output_path(output_folder, "evtx/file.evtx").unwrap(),
+            output_folder.join("evtx").join("file.evtx")
+        );
+        assert_eq!(
+            safe_output_path(output_folder, "evtx\\file.evtx").unwrap(),
+            output_folder.join("evtx").join("file.evtx")
+        );
+    }
 
     #[test]
     fn test_archive_with_password() {
@@ -205,5 +273,58 @@ mod tests {
         assert!(fs::exists(&out_dir.join("GetThis.csv")).unwrap());
         assert!(fs::exists(&out_dir.join("evtx/WinRM%4Operationa.data")).unwrap());
         assert!(fs::exists(&out_dir.join("evtx/EBE79D4BE79B4B5_1000000001173_2000000000032_4_Microsoft-Windows-Kernel-EventTracing%4Admin.evtx_{00000000-0000-0000-0000-000000000000}.data")).unwrap());
+    }
+
+    #[test]
+    fn extract_7z_files_rejects_output_path_traversal() {
+        let base_dir = Path::new(TMP_FOLDER).join("7z").join("traversal");
+        if fs::exists(&base_dir).unwrap() {
+            fs::remove_dir_all(&base_dir).unwrap();
+        }
+
+        let out_dir = base_dir.join("out");
+        fs::create_dir_all(&out_dir).unwrap();
+        let escaped_path = base_dir.join("escaped.csv");
+
+        let mut files = FilesToExtract::default();
+        files.add("GetThis.csv".to_owned(), "../escaped.csv".to_owned());
+
+        let result = extract_7z_files(
+            "test_data/7z/Event.7z",
+            &files,
+            out_dir.to_str().unwrap(),
+            Some("password".to_owned()),
+        );
+
+        assert!(
+            matches!(result, Err(Error::UnsafeArchivePath(_))),
+            "expected traversal path to be rejected"
+        );
+        assert!(!fs::exists(&escaped_path).unwrap());
+    }
+
+    #[test]
+    fn extract_7z_file_rejects_archive_entry_path_traversal() {
+        let base_dir = Path::new(TMP_FOLDER).join("7z").join("single_traversal");
+        if fs::exists(&base_dir).unwrap() {
+            fs::remove_dir_all(&base_dir).unwrap();
+        }
+
+        let out_dir = base_dir.join("out");
+        fs::create_dir_all(&out_dir).unwrap();
+        let escaped_path = base_dir.join("escaped.csv");
+
+        let result = extract_7z_file(
+            "test_data/7z/Event.7z",
+            "../escaped.csv",
+            out_dir.to_str().unwrap(),
+            Some("password".to_owned()),
+        );
+
+        assert!(
+            matches!(result, Err(Error::UnsafeArchivePath(_))),
+            "expected traversal path to be rejected"
+        );
+        assert!(!fs::exists(&escaped_path).unwrap());
     }
 }

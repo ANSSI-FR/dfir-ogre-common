@@ -1,6 +1,7 @@
 use crate::{
     Error, Metadata, Output, Record, RunConfiguration, RunReport, Value,
     configuration::PluginConfiguration,
+    parser::runner,
     windows_utils::{from_filetime, security_descriptor_from_bytes},
 };
 use dfir_nt_hive::{Hive, KeyNode, KeyValue, KeyValueData, KeyValueDataType, NtHiveError, Result};
@@ -143,7 +144,7 @@ fn parse_keys(
         &mut report,
     )?;
 
-    report.add_output_report(key_output.get_report());
+    runner::finalize_output(&mut key_output, &mut report);
     Ok(report)
 }
 
@@ -368,7 +369,7 @@ fn parse_values(
         &mut report,
     )?;
 
-    report.add_output_report(key_output.get_report());
+    runner::finalize_output(&mut key_output, &mut report);
     Ok(report)
 }
 
