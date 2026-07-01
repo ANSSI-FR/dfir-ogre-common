@@ -1,6 +1,6 @@
 [package]
 name = "dfir-ogre-common"
-version = "2.0.0-beta1"
+version = "2.0.0-beta2"
 edition = "2024"
 description = "This project is part of the [DFIR-OGRE](https://github.com/ANSSI-FR/dfir-ogre) suite and provides a low level Rust runtime to run DFIR-OGRE plugins."
 homepage = "https://github.com/ANSSI-FR/dfir-ogre-common"
