@@ -63,8 +63,7 @@ impl JsonFormatter {
             OutputType::File => Path::new(&output_folder).join(format!("{file_name}.jsonl")),
             OutputType::Gzip => Path::new(&output_folder).join(format!("{file_name}.jsonl.gz")),
         };
-        let file_name = file_path.display().to_string();
-        file_report.file_name = file_name.clone();
+        file_report.file_name = file_path.display().to_string();
 
         let file = OpenOptions::new()
             .read(true)
@@ -270,12 +269,23 @@ mod tests {
 
     use flate2::read::GzDecoder;
 
-    use crate::{FieldMapping, Metadata, Record};
+    use crate::{
+        DateInputCodec, Field, FieldMapping, FieldName, Metadata, Parser, Record, TimeLineBuilder,
+        TimeLineType,
+    };
 
     use super::*;
 
     fn remove_if_exists(path: &Path) {
         match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
+    fn remove_dir_if_exists(path: &Path) {
+        match fs::remove_dir_all(path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => panic!("failed to remove {}: {error}", path.display()),
@@ -419,6 +429,93 @@ mod tests {
 
         remove_if_exists(&data_path);
         remove_if_exists(&metadata_path);
+    }
+
+    #[test]
+    fn normalized_file_writes_timeline_next_to_data_file() {
+        let output_folder = Path::new(TMP_FOLDER).join("test_normalized_json_timeline_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+        let output_folder = output_folder.to_str().unwrap();
+        let base_file_name = "test_normalized_json_timeline";
+        let data_path = Path::new(output_folder).join(format!("{base_file_name}.jsonl"));
+        let metadata_path = Path::new(output_folder).join("ogre_metadata.jsonl");
+        let timeline_path = Path::new(output_folder).join(format!("{base_file_name}.tl.jsonl"));
+        let repeated_folder_path = Path::new(output_folder).join(TMP_FOLDER);
+
+        let timeline_builder = TimeLineBuilder::new(
+            TimeLineType::Standard,
+            "json_test".to_string(),
+            100,
+            None,
+            None,
+        );
+        let field_mapping = FieldMapping::new(
+            vec![
+                Field::Single {
+                    name: FieldName::new("when".into(), false, None, None, None),
+                    parser: Parser::DateTime(DateInputCodec::Iso()),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("greetings".into(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+            ],
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("host-json-timeline".into()),
+            Some(timeline_builder),
+            field_mapping,
+            true,
+            false,
+            true,
+        );
+        let mut output = JsonFormatter::new(
+            OutputType::File,
+            output_folder,
+            base_file_name,
+            DateOutputCodec::Iso(),
+            false,
+            true,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            true,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        let timestamp =
+            crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        record.add("when", Value::Date(timestamp));
+        record.add("greetings", Value::String("Hello".to_owned()));
+        line_builder.build(&mut record).unwrap();
+
+        output.write_metadata(&line_builder).unwrap();
+        output.write_normalized(&line_builder).unwrap();
+        assert_eq!(output.file_report.num_lines, 1);
+        output.close().unwrap();
+
+        assert!(data_path.exists());
+        assert!(metadata_path.exists());
+        assert!(timeline_path.exists());
+        assert!(!repeated_folder_path.exists());
+
+        let data_json: serde_json::Value =
+            serde_json::from_str(fs::read_to_string(&data_path).unwrap().trim()).unwrap();
+        let timeline_json: serde_json::Value =
+            serde_json::from_str(fs::read_to_string(&timeline_path).unwrap().trim()).unwrap();
+        assert_eq!(data_json["greetings"], "Hello");
+        assert_eq!(timeline_json["computer"], "host-json-timeline");
+        assert_eq!(timeline_json["timestamp_meaning"], "when");
+        assert_eq!(timeline_json["data_type"], "json_test");
+        assert_eq!(timeline_json["data_id"], data_json["ogre_id"]);
+        assert!(timeline_json["metadata_id"].as_str().unwrap().len() > 10);
+
+        remove_dir_if_exists(Path::new(output_folder));
     }
 
     #[test]
