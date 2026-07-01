@@ -31,9 +31,6 @@ pub struct LineData {
     pub data_id_hasher: Hasher,
     /// Vector of timeline records generated from date fields during parsing.
     pub timeline: Vec<TimeLine>,
-    /// If `true`, field names will include their qualifier prefixes (e.g., "source.field").
-    pub require_qualifiers: bool,
-
     /// Indicates whether the input data contains defined primary keys for hashing purposes.
     pub has_primary_keys: bool,
 }
@@ -43,9 +40,8 @@ impl LineData {
     /// # Arguments
     ///
     /// * `compute_hash` - If true, initializes a hasher to generate identifiers from field values.
-    /// * `require_qualifiers` - If true, field names will include their qualifier suffixes.
     /// * `has_primary_keys` - Indicates if the input has defined primary keys for hashing.
-    fn new(compute_hash: bool, require_qualifiers: bool, has_primary_keys: bool) -> Self {
+    fn new(compute_hash: bool, has_primary_keys: bool) -> Self {
         Self {
             has_primary_keys,
             data: Record::new(),
@@ -53,7 +49,6 @@ impl LineData {
             timeline: Vec::new(),
             data_id_hasher: Hasher::new(),
             compute_hash,
-            require_qualifiers,
         }
     }
 
@@ -62,17 +57,10 @@ impl LineData {
     /// # Arguments
     ///
     /// * `size` - Initial capacity for the internal data record.
-    /// * `require_qualifiers` - If true, field names will include their qualifier prefixes.
     /// * `compute_hash` - If true, initializes a hasher to generate identifiers from field values.
     /// * `has_primary_keys` - Indicates if the input has defined primary keys for hashing.
-    fn with_capacity(
-        size: usize,
-        require_qualifiers: bool,
-        compute_hash: bool,
-        has_primary_keys: bool,
-    ) -> Self {
+    fn with_capacity(size: usize, compute_hash: bool, has_primary_keys: bool) -> Self {
         Self {
-            require_qualifiers,
             has_primary_keys,
             data: Record::with_capacity(size),
             data_id: None,
@@ -99,8 +87,7 @@ impl LineData {
             }
         }
 
-        self.data
-            .add(field_name.name(self.require_qualifiers), value);
+        self.data.add(field_name.name(), value);
     }
 
     /// Clears all data and timeline records, resetting the hasher if present.
@@ -221,7 +208,6 @@ impl LineBuilder {
     /// * `metadata` - The metadata record to associate with each generated line.
     /// * `timeline_builder` - Optional timeline builder for date field enrichment.
     /// * `field_mapping` - Configuration defining how input fields map to output format.
-    /// * `require_qualifiers` - If true, field names will include their qualifier prefixes.
     /// * `compute_hash` - If true, enables hash-based identifier generation from field values.
     /// * `has_primary_keys` - Indicates if the input data contains defined primary keys.
     /// * `force_snake_case` - If true, converts unmapped field keys to snake_case.
@@ -233,7 +219,6 @@ impl LineBuilder {
         mut metadata: Metadata,
         timeline_builder: Option<TimeLineBuilder>,
         field_mapping: FieldMapping,
-        require_qualifiers: bool,
         compute_hash: bool,
         has_primary_keys: bool,
         force_snake_case: bool,
@@ -252,7 +237,7 @@ impl LineBuilder {
             timeline_builder,
             field_mapping,
             force_snake_case,
-            line_data: LineData::new(compute_hash, require_qualifiers, has_primary_keys),
+            line_data: LineData::new(compute_hash, has_primary_keys),
             compute_hash,
         }
     }
@@ -378,7 +363,7 @@ impl LineBuilder {
     /// * `line_data` - The output structure where transformed data is accumulated.
     /// * `timeline_builder` - Optional timeline builder for date enrichment.
     /// * `timeline_fields` - Mapping of field names to timeline configurations.
-    /// * `field_name` - The target field name with qualifiers and output name info.
+    /// * `field_name` - The target field name with output name info.
     /// * `ignore` - If true, the field is skipped (but still removed from input).
     /// * `root` - Indicates if this is the root level (controls default inclusion).
     fn process_flat_field(
@@ -413,7 +398,7 @@ impl LineBuilder {
                 && let Some(tl_fields) = timeline_fields
                 && let Some(tl_field) = tl_fields.get(output_key)
             {
-                timeline_builder.add_field_value(&tl_field.fields, field_name.name(false), &value);
+                timeline_builder.add_field_value(&tl_field.fields, field_name.name(), &value);
             }
 
             line_data.add_data(field_name, value);
@@ -459,7 +444,7 @@ impl LineBuilder {
                 {
                     timeline_builder.add_field_value(
                         &tlfields.fields,
-                        field_name.name(false),
+                        field_name.name(),
                         &value,
                     );
                 }
@@ -471,7 +456,6 @@ impl LineBuilder {
             if let Value::Object(mut inner_data) = value {
                 let mut inner_insert = LineData::with_capacity(
                     field_mapping.len(),
-                    line_data.require_qualifiers,
                     false,
                     false,
                 );
@@ -541,7 +525,7 @@ impl LineBuilder {
                 {
                     timeline_builder.add_field_value(
                         &fields.fields,
-                        name.name(false),
+                        name.name(),
                         &value_array,
                     );
                 }
@@ -568,7 +552,7 @@ impl LineBuilder {
                 {
                     timeline_builder.add_field_value(
                         &fields.fields,
-                        multi_input_field.output_field.name(false),
+                        multi_input_field.output_field.name(),
                         &value_array,
                     );
                 }
@@ -607,7 +591,7 @@ impl LineBuilder {
                         && let Some(fields) = tl_fields.get(output_name)
                     {
                         let array = Value::Array(value_array.clone());
-                        timeline_builder.add_field_value(&fields.fields, name.name(false), &array);
+                        timeline_builder.add_field_value(&fields.fields, name.name(), &array);
                     }
 
                     for v in value_array {
@@ -618,7 +602,6 @@ impl LineBuilder {
 
                             let mut inner_insert = LineData::with_capacity(
                                 fields.len(),
-                                line_data.require_qualifiers,
                                 false,
                                 false,
                             );
@@ -673,7 +656,6 @@ impl LineBuilder {
             Value::Object(mut inner_data) => {
                 let mut inner_insert = LineData::with_capacity(
                     inner_data.len(),
-                    line_data.require_qualifiers,
                     false,
                     false,
                 );
@@ -689,7 +671,7 @@ impl LineBuilder {
                 )?;
 
                 line_data.add_data(
-                    &FieldName::new(insert_key, false, None, None, None, None),
+                    &FieldName::new(insert_key, false, None, None, None),
                     Value::Object(inner_insert.data),
                 );
             }
@@ -699,7 +681,7 @@ impl LineBuilder {
                     if let Value::Date(date) = &value {
                         timeline_builder.add_date(
                             *date,
-                            &FieldName::new(insert_key.to_owned(), false, None, None, None, None),
+                            &FieldName::new(insert_key.to_owned(), false, None, None, None),
                         );
                     } else if let Value::Null() = &value {
                         return Ok(());
@@ -713,7 +695,7 @@ impl LineBuilder {
                 }
 
                 line_data.add_data(
-                    &FieldName::new(insert_key, false, None, None, None, None),
+                    &FieldName::new(insert_key, false, None, None, None),
                     value,
                 );
             }
@@ -796,7 +778,7 @@ mod tests {
     use std::usize;
 
     use crate::{
-        DateInputCodec, FieldName, Parser, Qualifiers,
+        DateInputCodec, FieldName, Parser,
         field::{ArrayField, Field},
         parse_date,
         timeline::TimeLineType,
@@ -818,7 +800,6 @@ mod tests {
             metadata,
             None,
             FieldMapping::new(vec![], None),
-            true,
             false,
             false,
             true,
@@ -860,7 +841,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             FieldMapping::new(vec![], None),
-            true,
             false,
             false,
             true,
@@ -922,18 +902,16 @@ mod tests {
     ///
     /// This test verifies:
     /// - That fields are correctly mapped according to the provided `FieldMapping`.
-    /// - That qualifiers are correctly appended to field names when enabled.
+    /// - That mapped fields use their plain output names.
     /// - That empty fields are included when `include_empty` is set to `true`.
     /// - That metadata is correctly inserted under the `ogre_md` field.
     #[test]
     fn simple_mapping() {
-        let qualifiers = Qualifiers::new();
         let greetings = Field::Single {
             name: FieldName::new(
                 "greetings".to_owned(),
                 false,
                 Some("output_greeting".to_owned()),
-                Some(qualifiers.APP_NAME),
                 None,
                 Some("greetings desc".to_owned()),
             ),
@@ -942,7 +920,7 @@ mod tests {
         };
 
         let year = Field::Single {
-            name: FieldName::new("year".to_owned(), false, None, None, None, None),
+            name: FieldName::new("year".to_owned(), false, None, None, None),
             parser: Parser::Int(),
             default_value: None,
         };
@@ -952,7 +930,6 @@ mod tests {
                 "no_values".to_owned(),
                 false,
                 None,
-                Some(qualifiers.APP_ID),
                 None,
                 None,
             ),
@@ -966,7 +943,7 @@ mod tests {
         let metadata = Metadata::new("test".into());
 
         let mut line_builder =
-            LineBuilder::new(metadata, None, field_mapping, true, false, false, true);
+            LineBuilder::new(metadata, None, field_mapping, false, false, true);
         let mut data = Record::new();
 
         data.insert(
@@ -979,25 +956,25 @@ mod tests {
 
         let record = &line_builder.line_data.data;
 
-        // Verify that the mapped field with qualifier is present
-        assert!(record.contains_key("output_greeting:app_name"));
-        // Verify that the simple field without qualifier is present
+        // Verify that the mapped field is present under its plain output name.
+        assert!(record.contains_key("output_greeting"));
+        // Verify that the simple field is present.
         assert!(record.contains_key("year"));
-        // Verify that the field with app_id qualifier with null value is present
-        assert!(record.contains_key("no_values:app_id"));
+        // Verify that the missing field with null value is present under its plain output name.
+        assert!(record.contains_key("no_values"));
     }
 
     /// Tests that fields with an ignore parser are properly excluded even when the include_empty is set.
     #[test]
     fn ignore_parser_with_include_empty() {
         let greetings = Field::Single {
-            name: FieldName::new("greetings".to_owned(), false, None, None, None, None),
+            name: FieldName::new("greetings".to_owned(), false, None, None, None),
             parser: Parser::String(),
             default_value: None,
         };
 
         let ignore = Field::Single {
-            name: FieldName::new("ignore".to_owned(), false, None, None, None, None),
+            name: FieldName::new("ignore".to_owned(), false, None, None, None),
             parser: Parser::Ignore(),
             default_value: None,
         };
@@ -1009,7 +986,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             field_mapping,
-            true,
             false,
             false,
             true,
@@ -1025,7 +1001,7 @@ mod tests {
 
         let record = &line_builder.line_data.data;
 
-        // Verify that the mapped field with qualifier is present
+        // Verify that the mapped field is present.
         assert!(record.contains_key("greetings"));
 
         // Verify that field with ignore parser is absent
@@ -1037,17 +1013,14 @@ mod tests {
     /// This test verifies:
     /// - That nested objects are correctly processed and included in the output.
     /// - That fields from deeply nested structures are correctly extracted and mapped.
-    /// - That qualifiers are correctly applied to nested fields.
+    /// - That mapped nested fields use their plain output names.
     /// - That non-mapped fields are still included in the output.
     #[test]
     fn nested_mapping() {
-        let qualifiers = Qualifiers::new();
-
         let lvl2_name = FieldName::new(
             "lvl2".to_owned(),
             false,
             Some("lvl2_output".to_owned()),
-            Some(qualifiers.COMPANY),
             None,
             None,
         );
@@ -1056,7 +1029,6 @@ mod tests {
                 "greetings".to_owned(),
                 false,
                 Some("lvl2_greeting".to_owned()),
-                Some(qualifiers.APP_NAME),
                 None,
                 Some("greetings desc".to_owned()),
             ),
@@ -1074,7 +1046,6 @@ mod tests {
             "lvl1".to_owned(),
             false,
             Some("lvl1_output".to_owned()),
-            Some(qualifiers.FILE_NAME),
             None,
             None,
         );
@@ -1090,7 +1061,6 @@ mod tests {
                 "greetings".to_owned(),
                 false,
                 Some("output_greeting".to_owned()),
-                Some(qualifiers.CERT_SHA1),
                 None,
                 Some("greetings desc".to_owned()),
             ),
@@ -1103,7 +1073,7 @@ mod tests {
 
         let metadata = Metadata::new("test".into());
         let mut line_builder =
-            LineBuilder::new(metadata, None, field_mapping, true, false, false, true);
+            LineBuilder::new(metadata, None, field_mapping, false, false, true);
         let mut data = Record::new();
 
         data.insert(
@@ -1138,26 +1108,26 @@ mod tests {
 
         let record = line_builder.line_data.data;
 
-        // Verify top-level mapped field with qualifier
-        assert!(record.contains_key("output_greeting:cert_sha1"));
+        // Verify top-level mapped field.
+        assert!(record.contains_key("output_greeting"));
         // Verify top-level non-mapped field is still included
         assert!(record.contains_key("not_mapped"));
 
-        // Verify nested structure with correct qualifiers
-        let lvl1 = match record.get("lvl1_output:file_name").unwrap() {
+        // Verify nested structure with plain output names.
+        let lvl1 = match record.get("lvl1_output").unwrap() {
             Value::Object(val) => &val.0,
             _ => panic!("expected an Object"),
         };
         // Verify non-mapped field in nested object is included
         assert!(lvl1.contains_key("l1_not_mapped"));
 
-        let lvl2 = match lvl1.get("lvl2_output:company_name").unwrap() {
+        let lvl2 = match lvl1.get("lvl2_output").unwrap() {
             Value::Object(val) => &val.0,
             _ => panic!("expected an Object"),
         };
 
-        // Verify deeply nested mapped field with qualifier
-        assert!(lvl2.contains_key("lvl2_greeting:app_name"));
+        // Verify deeply nested mapped field.
+        assert!(lvl2.contains_key("lvl2_greeting"));
         // Verify non-mapped field in nested object is included
         assert!(lvl2.contains_key("l2_not_mapped"));
     }
@@ -1181,14 +1151,13 @@ mod tests {
                     Some("root_str".to_owned()),
                     None,
                     None,
-                    None,
                 ),
                 parser: Parser::String(),
                 default_value: None,
             },
             Field::Array(ArrayField::new(Field::Object {
                 ignore: true,
-                name: FieldName::new("array".to_owned(), false, None, None, None, None),
+                name: FieldName::new("array".to_owned(), false, None, None, None),
                 fields: vec![],
             })),
         ];
@@ -1197,7 +1166,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             field_mapping,
-            true,
             false,
             false,
             true,
@@ -1221,15 +1189,12 @@ mod tests {
             Value::Array(vec![Value::Int(0), Value::Int(1)]),
         );
 
-        let qualifiers = Qualifiers::new();
-
         let mapping = vec![
             Field::Single {
                 name: FieldName::new(
                     "str".to_owned(),
                     false,
                     Some("root_str".to_owned()),
-                    None,
                     None,
                     None,
                 ),
@@ -1241,7 +1206,6 @@ mod tests {
                     "ints".to_owned(),
                     false,
                     Some("int_array".to_owned()),
-                    Some(qualifiers.APP_ID),
                     None,
                     None,
                 ),
@@ -1255,7 +1219,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             field_mapping,
-            true,
             false,
             false,
             true,
@@ -1263,7 +1226,7 @@ mod tests {
 
         line_builder.build(&mut root).unwrap();
 
-        let array = line_builder.line_data.data.get("int_array:app_id").unwrap();
+        let array = line_builder.line_data.data.get("int_array").unwrap();
 
         match array {
             Value::Array(records) => {
@@ -1298,14 +1261,13 @@ mod tests {
                     Some("root_str".to_owned()),
                     None,
                     None,
-                    None,
                 ),
                 parser: Parser::String(),
                 default_value: None,
             },
             Field::Array(ArrayField::new(Field::Object {
                 ignore: false,
-                name: FieldName::new("array".to_owned(), false, None, None, None, None),
+                name: FieldName::new("array".to_owned(), false, None, None, None),
                 fields: vec![],
             })),
         ];
@@ -1314,7 +1276,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             field_mapping,
-            false,
             false,
             false,
             false,
@@ -1363,13 +1324,11 @@ mod tests {
             Value::Array(vec![Value::Object(nested_tup1), Value::Object(nested_tup2)]),
         );
 
-        let qualifiers = Qualifiers::new();
         let mapping = vec![
             Field::Single {
                 name: FieldName::new(
                     "timestamp".to_owned(),
                     false,
-                    None,
                     None,
                     Some("Message Date".to_owned()),
                     None,
@@ -1379,13 +1338,12 @@ mod tests {
             },
             Field::Array(ArrayField::new(Field::Object {
                 ignore: false,
-                name: FieldName::new("comments".to_owned(), false, None, None, None, None),
+                name: FieldName::new("comments".to_owned(), false, None, None, None),
                 fields: vec![
                     Field::Single {
                         name: FieldName::new(
                             "timestamp".to_owned(),
                             false,
-                            None,
                             None,
                             Some("Comment Date".to_owned()),
                             None,
@@ -1398,7 +1356,6 @@ mod tests {
                             "comment".to_owned(),
                             false,
                             None,
-                            Some(qualifiers.APP_ID),
                             None,
                             None,
                         ),
@@ -1424,7 +1381,6 @@ mod tests {
             Metadata::new("test".into()),
             Some(timeline_builder),
             field_mapping,
-            false,
             false,
             false,
             true,
@@ -1453,7 +1409,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_object_array_with_qualifiers() {
+    fn nested_object_array_uses_plain_output_names() {
         let mut nested_tup = Record::new();
 
         nested_tup.add("nested_bool", Value::Bool(true));
@@ -1463,15 +1419,12 @@ mod tests {
         root.add("str", Value::String("root".to_string()));
         root.add("array", Value::Array(vec![Value::Object(nested_tup)]));
 
-        let qualifiers = Qualifiers::new();
-
         let mapping = vec![
             Field::Single {
                 name: FieldName::new(
                     "str".to_owned(),
                     false,
                     Some("root_str".to_owned()),
-                    None,
                     None,
                     None,
                 ),
@@ -1483,7 +1436,6 @@ mod tests {
                     "array".to_owned(),
                     false,
                     None,
-                    Some(qualifiers.APP_CLSID),
                     None,
                     None,
                 ),
@@ -1493,7 +1445,6 @@ mod tests {
                         "nested_str".to_owned(),
                         false,
                         Some("some_str".to_owned()),
-                        Some(qualifiers.APP_ID),
                         None,
                         None,
                     ),
@@ -1508,21 +1459,20 @@ mod tests {
             Metadata::new("test".into()),
             None,
             field_mapping,
-            true,
             false,
             false,
             true,
         );
 
         line_builder.build(&mut root).unwrap();
-        let array = line_builder.line_data.data.get("array:app_clsid").unwrap();
+        let array = line_builder.line_data.data.get("array").unwrap();
 
         match array {
             Value::Array(records) => {
                 let val = &records[0];
                 match val {
                     Value::Object(record) => {
-                        record.0.get("some_str:app_id").unwrap();
+                        record.0.get("some_str").unwrap();
                     }
                     _ => panic!("should be an array"),
                 }
@@ -1588,7 +1538,6 @@ mod tests {
             FieldMapping::new(vec![], None),
             false,
             false,
-            false,
             true,
         );
         let mut record = Record::new();
@@ -1609,16 +1558,16 @@ mod tests {
     fn mapped_nested_object_does_not_invent_missing_child_fields() {
         let mapping = FieldMapping::new(
             vec![Field::Object {
-                name: FieldName::new("details".to_owned(), false, None, None, None, None),
+                name: FieldName::new("details".to_owned(), false, None, None, None),
                 ignore: false,
                 fields: vec![
                     Field::Single {
-                        name: FieldName::new("present".to_owned(), false, None, None, None, None),
+                        name: FieldName::new("present".to_owned(), false, None, None, None),
                         parser: Parser::String(),
                         default_value: None,
                     },
                     Field::Single {
-                        name: FieldName::new("missing".to_owned(), false, None, None, None, None),
+                        name: FieldName::new("missing".to_owned(), false, None, None, None),
                         parser: Parser::String(),
                         default_value: None,
                     },
@@ -1630,7 +1579,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             mapping,
-            false,
             false,
             false,
             false,
@@ -1657,10 +1605,10 @@ mod tests {
     fn ignored_object_mapping_skips_output() {
         let mapping = FieldMapping::new(
             vec![Field::Object {
-                name: FieldName::new("details".to_owned(), false, None, None, None, None),
+                name: FieldName::new("details".to_owned(), false, None, None, None),
                 ignore: true,
                 fields: vec![Field::Single {
-                    name: FieldName::new("hidden".to_owned(), false, None, None, None, None),
+                    name: FieldName::new("hidden".to_owned(), false, None, None, None),
                     parser: Parser::String(),
                     default_value: None,
                 }],
@@ -1671,7 +1619,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             mapping,
-            false,
             false,
             false,
             false,
@@ -1688,17 +1635,15 @@ mod tests {
 
     #[test]
     fn mapped_array_objects_preserve_renamed_and_unmapped_fields() {
-        let qualifiers = Qualifiers::new();
         let mapping = FieldMapping::new(
             vec![Field::Array(ArrayField::new(Field::Object {
-                name: FieldName::new("items".to_owned(), false, None, None, None, None),
+                name: FieldName::new("items".to_owned(), false, None, None, None),
                 ignore: false,
                 fields: vec![Field::Single {
                     name: FieldName::new(
                         "parsed_name".to_owned(),
                         false,
                         Some("item_name".to_owned()),
-                        Some(qualifiers.APP_ID),
                         None,
                         None,
                     ),
@@ -1712,7 +1657,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             mapping,
-            true,
             false,
             false,
             true,
@@ -1734,7 +1678,7 @@ mod tests {
             value => panic!("expected first item object, got {value:?}"),
         };
         assert_eq!(
-            first.get("item_name:app_id"),
+            first.get("item_name"),
             Some(&Value::String("first".to_owned()))
         );
         assert_eq!(first.get("extra_field"), Some(&Value::Bool(true)));
@@ -1746,7 +1690,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             FieldMapping::new(vec![], None),
-            false,
             false,
             false,
             true,
@@ -1774,7 +1717,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             FieldMapping::new(vec![], None),
-            false,
             false,
             false,
             true,
@@ -1807,7 +1749,6 @@ mod tests {
             FieldMapping::new(vec![], None),
             false,
             false,
-            false,
             true,
         );
         let mut record = Record::new();
@@ -1832,12 +1773,12 @@ mod tests {
         FieldMapping::new(
             vec![
                 Field::Single {
-                    name: FieldName::new("id".to_owned(), true, None, None, None, None),
+                    name: FieldName::new("id".to_owned(), true, None, None, None),
                     parser: Parser::String(),
                     default_value: None,
                 },
                 Field::Single {
-                    name: FieldName::new("message".to_owned(), false, None, None, None, None),
+                    name: FieldName::new("message".to_owned(), false, None, None, None),
                     parser: Parser::String(),
                     default_value: None,
                 },
@@ -1853,7 +1794,7 @@ mod tests {
         message: &str,
     ) -> String {
         let mut line_builder =
-            LineBuilder::new(metadata, None, field_mapping, false, true, true, true);
+            LineBuilder::new(metadata, None, field_mapping, true, true, true);
         let mut record = Record::new();
         record.add("id", Value::String(id.to_owned()));
         record.add("message", Value::String(message.to_owned()));

@@ -929,7 +929,7 @@ impl TimeLineBuilder {
 mod tests {
 
     use crate::{
-        DateInputCodec, FieldMapping, Metadata, Parser, Qualifiers, Record,
+        DateInputCodec, FieldMapping, Metadata, Parser, Record,
         date_util::DateOutputCodec, field::Field, line_builder::LineBuilder,
     };
 
@@ -949,7 +949,6 @@ mod tests {
             "date_1".to_owned(),
             false,
             None,
-            None,
             Some("Meaning 1".to_owned()),
             Some("Long Meaning 1".to_owned()),
         );
@@ -958,7 +957,6 @@ mod tests {
         let datefield_2 = FieldName::new(
             "date_2".to_owned(),
             false,
-            None,
             None,
             Some("Meaning 2".to_owned()),
             Some("Long Meaning 2".to_owned()),
@@ -1038,7 +1036,6 @@ mod tests {
             false,
             None,
             None,
-            None,
             Some("Meaning of date 1".to_owned()),
         );
         timeline.add_date(date, &datefield);
@@ -1059,18 +1056,17 @@ mod tests {
 
         timeline.add_date(
             date,
-            &FieldName::new("si_lastmod_date".to_owned(), false, None, None, None, None),
+            &FieldName::new("si_lastmod_date".to_owned(), false, None, None, None),
         );
         timeline.add_date(
             date,
-            &FieldName::new("si_creation_date".to_owned(), false, None, None, None, None),
+            &FieldName::new("si_creation_date".to_owned(), false, None, None, None),
         );
         timeline.add_date(
             date,
             &FieldName::new(
                 "fn_lastaccess_date".to_owned(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -1081,7 +1077,6 @@ mod tests {
             &FieldName::new(
                 "fn_lastchange_date".to_owned(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -1102,12 +1097,10 @@ mod tests {
         //
         // field mapping
         //
-        let qualifiers = Qualifiers::new();
         let lvl2_name = FieldName::new(
             "lvl2".to_owned(),
             false,
             Some("lvl2_output".to_owned()),
-            Some(qualifiers.COMPANY),
             None,
             None,
         );
@@ -1116,7 +1109,6 @@ mod tests {
                 "greetings".to_owned(),
                 false,
                 Some("lvl2_greeting".to_owned()),
-                Some(qualifiers.APP_NAME),
                 None,
                 Some("greetings desc".to_owned()),
             ),
@@ -1128,7 +1120,6 @@ mod tests {
                 "descr".to_owned(),
                 false,
                 Some("lvl2_descr".to_owned()),
-                None,
                 None,
                 Some("lvl2_descr".to_owned()),
             ),
@@ -1148,7 +1139,6 @@ mod tests {
                         false,
                         Some("si_lastmod_date".to_owned()),
                         None,
-                        None,
                         Some("Windows UserId".to_owned()),
                     ),
                     parser: Parser::String(),
@@ -1161,7 +1151,6 @@ mod tests {
             "lvl1".to_owned(),
             false,
             Some("lvl1_output".to_owned()),
-            Some(qualifiers.FILE_NAME),
             None,
             None,
         );
@@ -1171,7 +1160,6 @@ mod tests {
                 "descr".to_owned(),
                 false,
                 Some("lvl1_descr".to_owned()),
-                None,
                 None,
                 Some("lvl1_descr".to_owned()),
             ),
@@ -1191,7 +1179,6 @@ mod tests {
                         false,
                         Some("fn_lastchange_date".to_owned()),
                         None,
-                        None,
                         Some("Windows UserId".to_owned()),
                     ),
                     parser: Parser::String(),
@@ -1205,7 +1192,6 @@ mod tests {
                 "user".to_owned(),
                 false,
                 Some("user_id".to_owned()),
-                Some(qualifiers.CERT_SHA1),
                 None,
                 Some("Windows UserId".to_owned()),
             ),
@@ -1221,7 +1207,6 @@ mod tests {
                     "creation_date_si".to_owned(),
                     false,
                     Some("si_creation_date".to_owned()),
-                    Some(qualifiers.DATE_CREATION),
                     None,
                     Some("Creation date".to_owned()),
                 ),
@@ -1233,7 +1218,6 @@ mod tests {
                     "fn_creationDate".to_owned(),
                     false,
                     Some("fn_creation_date".to_owned()),
-                    None,
                     None,
                     Some("Creation date".to_owned()),
                 ),
@@ -1265,7 +1249,6 @@ mod tests {
             metadata,
             Some(timeline),
             field_mapping,
-            true,
             false,
             false,
             true,

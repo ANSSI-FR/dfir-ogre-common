@@ -288,7 +288,6 @@ mod tests {
             FieldMapping::new(vec![], None),
             false,
             false,
-            false,
             true,
         );
         let mut ouput = JsonFormatter::new(
@@ -373,7 +372,6 @@ mod tests {
             Metadata::new("host-json".into()),
             None,
             FieldMapping::new(vec![], None),
-            false,
             true,
             false,
             true,
@@ -426,7 +424,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             FieldMapping::new(vec![], None),
-            false,
             false,
             false,
             true,

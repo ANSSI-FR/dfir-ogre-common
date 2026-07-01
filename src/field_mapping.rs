@@ -366,7 +366,7 @@ impl FieldParserTree {
                             Field::Array(_) => {
                                 warn!(
                                     "for field mapping '{:#?}' array of arrays is not supported, the field is ignored",
-                                    field.name(false)
+                                    field.name()
                                 );
                             }
                             Field::Object {
@@ -466,7 +466,6 @@ impl FieldParserTree {
                                 None,
                                 None,
                                 None,
-                                None,
                             ),
                             parser: defautl.clone(),
                             default_value: None,
@@ -539,7 +538,6 @@ impl FieldParserTree {
                                 name: FieldName::new(
                                     input_name.to_owned(),
                                     false,
-                                    None,
                                     None,
                                     None,
                                     None,
@@ -769,7 +767,7 @@ impl FieldMapping {
 #[cfg(test)]
 mod tests {
 
-    use crate::{DateInputCodec, Qualifiers, field::ArrayField};
+    use crate::{DateInputCodec, field::ArrayField};
 
     use super::*;
 
@@ -939,7 +937,6 @@ mod tests {
                     Some("items".to_owned()),
                     None,
                     None,
-                    None,
                 ),
                 ignore: false,
                 fields: vec![Field::Single {
@@ -947,7 +944,6 @@ mod tests {
                         "Name".to_owned(),
                         false,
                         Some("name".to_owned()),
-                        None,
                         None,
                         None,
                     ),
@@ -974,12 +970,12 @@ mod tests {
             "count".to_owned(),
             vec![
                 Field::Single {
-                    name: FieldName::new("ignored".to_owned(), false, None, None, None, None),
+                    name: FieldName::new("ignored".to_owned(), false, None, None, None),
                     parser: Parser::Ignore(),
                     default_value: None,
                 },
                 Field::Single {
-                    name: FieldName::new("count".to_owned(), false, None, None, None, None),
+                    name: FieldName::new("count".to_owned(), false, None, None, None),
                     parser: Parser::Int(),
                     default_value: None,
                 },
@@ -1003,7 +999,6 @@ mod tests {
                         Some("first".to_owned()),
                         None,
                         None,
-                        None,
                     ),
                     parser: Parser::String(),
                     default_value: None,
@@ -1013,7 +1008,6 @@ mod tests {
                         "shared".to_owned(),
                         false,
                         Some("second".to_owned()),
-                        None,
                         None,
                         None,
                     ),
@@ -1040,7 +1034,7 @@ mod tests {
         let leaf_parser = FieldParser::new(
             "items".to_owned(),
             vec![Field::Single {
-                name: FieldName::new("items".to_owned(), false, None, None, None, None),
+                name: FieldName::new("items".to_owned(), false, None, None, None),
                 parser: Parser::String(),
                 default_value: None,
             }],
@@ -1072,15 +1066,12 @@ mod tests {
     }
 
     fn field_mapping() -> Vec<Field> {
-        let qualifiers = Qualifiers::new();
-
         vec![
             Field::Single {
                 name: FieldName::new(
                     "timestamp".to_owned(),
                     false,
                     None,
-                    Some(qualifiers.DATE_CREATION.clone()),
                     None,
                     Some("Event generation time".to_owned()),
                 ),
@@ -1094,7 +1085,6 @@ mod tests {
                     Some("system".to_owned()),
                     None,
                     None,
-                    None,
                 ),
                 ignore: false,
                 fields: vec![
@@ -1105,7 +1095,6 @@ mod tests {
                             Some("time_created".to_owned()),
                             None,
                             None,
-                            None,
                         ),
                         ignore: false,
                         fields: vec![Field::Single {
@@ -1113,7 +1102,6 @@ mod tests {
                                 "SystemTime".to_owned(),
                                 false,
                                 Some("system_time".to_owned()),
-                                None,
                                 None,
                                 Some("Event written time".to_owned()),
                             ),
@@ -1128,7 +1116,6 @@ mod tests {
                             Some("event_record_id".to_owned()),
                             None,
                             None,
-                            None,
                         ),
                         parser: Parser::Ignore(),
                         default_value: None,
@@ -1140,7 +1127,6 @@ mod tests {
                     "EventData".to_owned(),
                     false,
                     Some("event_data".to_owned()),
-                    None,
                     None,
                     None,
                 ),

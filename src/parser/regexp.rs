@@ -328,12 +328,12 @@ mod tests {
                 field_mapping: Some(FieldMapping::new(
                     vec![
                         Field::Single {
-                            name: FieldName::new("date".to_owned(), false, None, None, None, None),
+                            name: FieldName::new("date".to_owned(), false, None, None, None),
                             parser: Parser::String(),
                             default_value: None,
                         },
                         Field::Single {
-                            name: FieldName::new("level".to_owned(), false, None, None, None, None),
+                            name: FieldName::new("level".to_owned(), false, None, None, None),
                             parser: Parser::String(),
                             default_value: None,
                         },
@@ -341,7 +341,6 @@ mod tests {
                             name: FieldName::new(
                                 "message".to_owned(),
                                 false,
-                                None,
                                 None,
                                 None,
                                 None,

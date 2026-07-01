@@ -5,7 +5,7 @@ use log::error;
 use pyo3::pyfunction;
 
 use crate::{
-    FieldName, Qualifiers, Value,
+    FieldName, Value,
     field::{ParserExtension, ParserExtensionTrait},
 };
 
@@ -29,12 +29,10 @@ pub struct FRNHexParser {
 }
 impl FRNHexParser {
     fn new(prefix: &str) -> Self {
-        let qualifiers = Qualifiers::new();
         let sequence = FieldName::new(
             format!("{prefix}sequence_number"),
             false,
             None,
-            Some(qualifiers.MFT_SEQUENCE),
             None,
             None,
         );
@@ -42,7 +40,6 @@ impl FRNHexParser {
             format!("{prefix}record_number"),
             false,
             None,
-            Some(qualifiers.FS_INODE),
             None,
             None,
         );
@@ -134,7 +131,6 @@ impl FileAttributesParser {
             None,
             None,
             None,
-            None,
         );
         let mut file_attributes = IndexMap::new();
         file_attributes.insert(
@@ -142,7 +138,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_archive".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -156,7 +151,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -164,7 +158,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_compressed".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -178,7 +171,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -186,7 +178,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_encrypted".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -200,7 +191,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -208,7 +198,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_not_content_indexed".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -222,7 +211,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -230,7 +218,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_normal".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -245,7 +232,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -253,7 +239,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_sparse_file".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -267,7 +252,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -275,7 +259,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_system".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -289,7 +272,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -297,7 +279,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_virtual".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -311,7 +292,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -319,7 +299,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_device".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -333,7 +312,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -341,7 +319,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_recall_on_open".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -355,7 +332,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -366,7 +342,6 @@ impl FileAttributesParser {
                 None,
                 None,
                 None,
-                None,
             ),
         );
         file_attributes.insert(
@@ -374,7 +349,6 @@ impl FileAttributesParser {
             FieldName::new(
                 "file_attributes_unpinned".to_string(),
                 false,
-                None,
                 None,
                 None,
                 None,
@@ -449,12 +423,10 @@ pub struct SignedHashParser {
 }
 impl SignedHashParser {
     fn new() -> Self {
-        let qualifiers = Qualifiers::new();
         let md5 = FieldName::new(
             "file_pe_md5".to_string(),
             false,
             None,
-            Some(qualifiers.PE_MD5.to_string()),
             None,
             None,
         );
@@ -462,7 +434,6 @@ impl SignedHashParser {
             "file_pe_sha1".to_string(),
             false,
             None,
-            Some(qualifiers.PE_SHA1.to_string()),
             None,
             None,
         );
@@ -470,7 +441,6 @@ impl SignedHashParser {
             "file_pe_sha256".to_string(),
             false,
             None,
-            Some(qualifiers.PE_SHA256.to_string()),
             None,
             None,
         );

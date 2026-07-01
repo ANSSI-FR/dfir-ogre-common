@@ -350,7 +350,6 @@ impl Output {
                 metadata.clone(),
                 timeline_builder.clone(),
                 field_mapping.clone(),
-                true,
                 compute_hash,
                 data_type_conf.has_primary_key,
                 run_config.force_snake_case,
@@ -363,7 +362,6 @@ impl Output {
                 metadata,
                 timeline_builder,
                 field_mapping,
-                false,
                 compute_hash,
                 data_type_conf.has_primary_key,
                 run_config.force_snake_case,
@@ -518,7 +516,7 @@ mod tests {
     fn event_field_mapping() -> FieldMapping {
         FieldMapping::new(
             vec![Field::Single {
-                name: FieldName::new("event".to_owned(), false, None, None, None, None),
+                name: FieldName::new("event".to_owned(), false, None, None, None),
                 parser: Parser::String(),
                 default_value: None,
             }],
@@ -678,7 +676,6 @@ mod tests {
                     "event".to_owned(),
                     false,
                     None,
-                    Some("event_tag".to_owned()),
                     None,
                     None,
                 ),

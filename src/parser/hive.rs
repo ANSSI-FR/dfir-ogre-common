@@ -121,7 +121,6 @@ fn parse_keys(
     //     TimeLineType::Standard,
     //     "UTC".to_owned(),
     //     "hive".to_owned(),
-    //     "Hive".to_owned(),
     //     1,
     // );
     // time_line_builder.add_related_user_ouput_path(vec![
@@ -307,7 +306,6 @@ const HIVE_VALUE_INVALID_SIGNATURE: &str = "invalid_signature";
 //                 None,
 //                 Some(qualifiers.VALUE_NAME.clone()),
 //                 None,
-//                 None,
 //             ),
 //             parser: Parser::String(),
 //             default_value: None,
@@ -318,23 +316,22 @@ const HIVE_VALUE_INVALID_SIGNATURE: &str = "invalid_signature";
 //                 None,
 //                 Some(qualifiers.KEY_PATH.clone()),
 //                 None,
-//                 None,
 //             ),
 //             parser: Parser::String(),
 //             default_value: None,
 //         },
 //         Field::Single {
-//             name: FieldName::new(HIVE_VALUE_TYPE.to_owned(), None, None, None, None),
+//             name: FieldName::new(HIVE_VALUE_TYPE.to_owned(), None, None, None),
 //             parser: Parser::String(),
 //             default_value: None,
 //         },
 //         Field::Single {
-//             name: FieldName::new(HIVE_VALUE_SIZE.to_owned(), None, None, None, None),
+//             name: FieldName::new(HIVE_VALUE_SIZE.to_owned(), None, None, None),
 //             parser: Parser::Int(),
 //             default_value: None,
 //         },
 //         Field::Single {
-//             name: FieldName::new(HIVE_VALUE_DATA.to_owned(), None, None, None, None),
+//             name: FieldName::new(HIVE_VALUE_DATA.to_owned(), None, None, None),
 //             parser: Parser::String(),
 //             default_value: None,
 //         },

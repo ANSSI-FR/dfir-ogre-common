@@ -345,7 +345,6 @@ mod tests {
             FieldMapping::new(vec![], None),
             false,
             false,
-            false,
             true,
         );
         let mut ouput = CsvFormatter::new(
@@ -394,7 +393,6 @@ mod tests {
             FieldMapping::new(vec![], None),
             false,
             false,
-            false,
             true,
         );
         let mut ouput = CsvFormatter::new(
@@ -423,7 +421,6 @@ mod tests {
             Metadata::new("test".into()),
             None,
             FieldMapping::new(vec![], None),
-            false,
             false,
             false,
             true,
@@ -515,17 +512,17 @@ mod tests {
         let field_mapping = FieldMapping::new(
             vec![
                 Field::Single {
-                    name: FieldName::new("when".into(), false, None, None, None, None),
+                    name: FieldName::new("when".into(), false, None, None, None),
                     parser: Parser::DateTime(DateInputCodec::Iso()),
                     default_value: None,
                 },
                 Field::Single {
-                    name: FieldName::new("greetings".into(), false, None, None, None, None),
+                    name: FieldName::new("greetings".into(), false, None, None, None),
                     parser: Parser::String(),
                     default_value: None,
                 },
                 Field::Single {
-                    name: FieldName::new("who".into(), false, None, None, None, None),
+                    name: FieldName::new("who".into(), false, None, None, None),
                     parser: Parser::String(),
                     default_value: None,
                 },
@@ -537,7 +534,6 @@ mod tests {
             Metadata::new("test".into()),
             Some(timeline_builder),
             field_mapping.clone(),
-            false,
             true,
             false,
             true,

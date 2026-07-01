@@ -329,7 +329,7 @@ mod tests {
     fn simple_event_mapping() -> FieldMapping {
         FieldMapping::new(
             vec![Field::Single {
-                name: FieldName::new("event".to_owned(), false, None, None, None, None),
+                name: FieldName::new("event".to_owned(), false, None, None, None),
                 parser: Parser::String(),
                 default_value: None,
             }],
@@ -341,16 +341,16 @@ mod tests {
         FieldMapping::new(
             vec![
                 Field::Single {
-                    name: FieldName::new("event".to_owned(), false, None, None, None, None),
+                    name: FieldName::new("event".to_owned(), false, None, None, None),
                     parser: Parser::String(),
                     default_value: None,
                 },
                 Field::Object {
-                    name: FieldName::new("details".to_owned(), false, None, None, None, None),
+                    name: FieldName::new("details".to_owned(), false, None, None, None),
                     ignore: false,
                     fields: vec![
                         Field::Single {
-                            name: FieldName::new("user".to_owned(), false, None, None, None, None),
+                            name: FieldName::new("user".to_owned(), false, None, None, None),
                             parser: Parser::String(),
                             default_value: None,
                         },
@@ -361,7 +361,6 @@ mod tests {
                                 None,
                                 None,
                                 None,
-                                None,
                             ),
                             parser: Parser::Bool(),
                             default_value: None,
@@ -369,16 +368,16 @@ mod tests {
                     ],
                 },
                 Field::Array(ArrayField::new(Field::Object {
-                    name: FieldName::new("items".to_owned(), false, None, None, None, None),
+                    name: FieldName::new("items".to_owned(), false, None, None, None),
                     ignore: false,
                     fields: vec![
                         Field::Single {
-                            name: FieldName::new("name".to_owned(), false, None, None, None, None),
+                            name: FieldName::new("name".to_owned(), false, None, None, None),
                             parser: Parser::String(),
                             default_value: None,
                         },
                         Field::Single {
-                            name: FieldName::new("size".to_owned(), false, None, None, None, None),
+                            name: FieldName::new("size".to_owned(), false, None, None, None),
                             parser: Parser::Int(),
                             default_value: None,
                         },

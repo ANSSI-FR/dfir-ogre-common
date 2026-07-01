@@ -377,17 +377,12 @@ impl MultiParser {
 ///
 /// * `in_name` – name of the field in the source data.
 /// * `out_name` – name used in the output; defaults to `in_name` when omitted.
-/// * `qualifier` – optional qualifier that can be appended to `out_name`.
-/// * `qualified_name` – cached version of `out_name:qualifier` when a
-///   qualifier is present.
 /// * `display_name` – a friendly label for UI or timeline displays.
 /// * `description` – a longer textual explanation of the field's purpose.
 pub struct FieldName {
     pub in_name: String,
     pub out_name: String,
     pub primary_key: bool,
-    pub qualifier: Option<String>,
-    pub qualified_name: Option<String>,
     pub display_name: Option<String>,
     pub description: Option<String>,
 }
@@ -399,52 +394,32 @@ impl FieldName {
     ///
     /// * `input_name` - The name of the field in the input data.
     /// * `output_name` - The desired name in the output data. If `None`, defaults to `input_name`.
-    /// * `qualifier` - An optional qualifier to append to the output name for classification.
     /// * `description` - An optional description to document the field's purpose or meaning.
     ///
     #[new]
-    #[pyo3(signature = (input_name, primary_key=false, output_name=None, qualifier=None,display_name=None, description=None))]
+    #[pyo3(signature = (input_name, primary_key=false, output_name=None, display_name=None, description=None))]
     pub fn new(
         input_name: String,
         primary_key: bool,
         output_name: Option<String>,
-        qualifier: Option<String>,
         display_name: Option<String>,
         description: Option<String>,
     ) -> Self {
         let output_name = output_name.unwrap_or(input_name.clone());
-
-        let qualified_name = qualifier
-            .as_ref()
-            .map(|qual| format!("{}:{}", &output_name, qual));
 
         FieldName {
             in_name: input_name,
 
             primary_key,
             out_name: output_name,
-            qualifier,
-            qualified_name,
             description,
             display_name,
         }
     }
 
-    /// Returns the field name, optionally including the qualifier.
-    ///
-    /// If `with_qualifier` is `true` and a qualifier is present, the qualified name (e.g., `name:qual`) is returned.
-    /// Otherwise, the base `out_name` is returned.
-    ///
-    /// # Arguments
-    ///
-    /// * `with_qualifier` - Whether to include the qualifier in the returned name.
-    ///
-    pub fn name(&self, with_qualifier: bool) -> &str {
-        if with_qualifier && self.qualified_name.is_some() {
-            self.qualified_name.as_deref().unwrap_or(&self.out_name)
-        } else {
-            &self.out_name
-        }
+    /// Returns the plain output field name.
+    pub fn name(&self) -> &str {
+        &self.out_name
     }
 
     #[inline]
@@ -516,7 +491,7 @@ pub enum Field {
     ///
     /// # Fields
     ///
-    /// * `name`: The metadata for the field, including input/output names, qualifiers, and descriptions.
+    /// * `name`: The metadata for the field, including input/output names and descriptions.
     /// * `parser`: The strategy used to parse the input value into a structured `Value`.
     ///
     Single {
@@ -560,26 +535,21 @@ pub enum Field {
 }
 
 impl Field {
-    /// Returns the output name of the field, optionally including the qualifier.
-    ///
-    /// # Arguments
-    ///
-    /// * `with_qualifier` - If `true`, includes the qualifier in the output name (e.g., `name:qual`).
-    ///
-    pub fn name(&self, with_qualifier: bool) -> &str {
+    /// Returns the plain output name of the field.
+    pub fn name(&self) -> &str {
         match self {
             Field::Single {
                 name,
                 parser: _,
                 default_value: _,
-            } => name.name(with_qualifier),
-            Field::Multi(f) => f.output_field.name(with_qualifier),
+            } => name.name(),
+            Field::Multi(f) => f.output_field.name(),
             Field::Object {
                 name,
                 fields: _,
                 ignore: _,
-            } => name.name(with_qualifier),
-            Field::Array(field) => field.0.name(with_qualifier),
+            } => name.name(),
+            Field::Array(field) => field.0.name(),
         }
     }
 
@@ -601,7 +571,7 @@ impl Field {
         }
     }
 
-    /// Returns the base output name as defined in the field's metadata, without any qualifier.
+    /// Returns the output name as defined in the field's metadata.
     pub fn output_name(&self) -> &str {
         match self {
             Field::Single {
@@ -1179,11 +1149,11 @@ mod tests {
     fn field_set_value_multi() {
         let field = Field::Multi(MultiInputField::new(
             vec![Field::Single {
-                name: FieldName::new("input_name".to_owned(), false, None, None, None, None),
+                name: FieldName::new("input_name".to_owned(), false, None, None, None),
                 parser: Parser::Bool(),
                 default_value: None,
             }],
-            FieldName::new("input_name".to_owned(), false, None, None, None, None),
+            FieldName::new("input_name".to_owned(), false, None, None, None),
             MultiParser::Join("()".to_owned(), true),
         ));
         let mut record = Record::new();
@@ -1195,7 +1165,7 @@ mod tests {
     #[test]
     fn field_set_value_object() {
         let field = Field::Object {
-            name: FieldName::new("input_name".to_owned(), false, None, None, None, None),
+            name: FieldName::new("input_name".to_owned(), false, None, None, None),
             fields: vec![],
             ignore: false,
         };
@@ -1215,7 +1185,7 @@ mod tests {
     fn field_set_value_simple() {
         //booleans
         let field = Field::Single {
-            name: FieldName::new("input_name".to_owned(), false, None, None, None, None),
+            name: FieldName::new("input_name".to_owned(), false, None, None, None),
             parser: Parser::Bool(),
             default_value: None,
         };
@@ -1228,7 +1198,7 @@ mod tests {
     fn field_parse_default() {
         //booleans
         let field = Field::Single {
-            name: FieldName::new("input_name".to_owned(), false, None, None, None, None),
+            name: FieldName::new("input_name".to_owned(), false, None, None, None),
             parser: Parser::Bool(),
             default_value: Some("false".to_string()),
         };

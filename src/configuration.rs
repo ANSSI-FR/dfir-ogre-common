@@ -546,7 +546,6 @@ fn parse_field_name(elem: &Element) -> Result<FieldName, Error> {
         input_name,
         primary_key,
         output_name,
-        None,
         display_name,
         description,
     ))
@@ -638,7 +637,6 @@ fn parse_multi_input(
         output_name.clone(),
         false,
         Some(output_name),
-        None,
         display_name,
         description,
     );
