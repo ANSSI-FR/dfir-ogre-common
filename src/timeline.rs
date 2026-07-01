@@ -929,8 +929,8 @@ impl TimeLineBuilder {
 mod tests {
 
     use crate::{
-        DateInputCodec, FieldMapping, Metadata, Parser, Record,
-        date_util::DateOutputCodec, field::Field, line_builder::LineBuilder,
+        DateInputCodec, FieldMapping, Metadata, Parser, Record, date_util::DateOutputCodec,
+        field::Field, line_builder::LineBuilder,
     };
 
     use super::*;
@@ -1064,23 +1064,11 @@ mod tests {
         );
         timeline.add_date(
             date,
-            &FieldName::new(
-                "fn_lastaccess_date".to_owned(),
-                false,
-                None,
-                None,
-                None,
-            ),
+            &FieldName::new("fn_lastaccess_date".to_owned(), false, None, None, None),
         );
         timeline.add_date(
             date,
-            &FieldName::new(
-                "fn_lastchange_date".to_owned(),
-                false,
-                None,
-                None,
-                None,
-            ),
+            &FieldName::new("fn_lastchange_date".to_owned(), false, None, None, None),
         );
         let timeline_data = timeline
             .timeline_data
@@ -1245,14 +1233,8 @@ mod tests {
         ]);
 
         let metadata = Metadata::new("test".into());
-        let mut line_builder = LineBuilder::new(
-            metadata,
-            Some(timeline),
-            field_mapping,
-            false,
-            false,
-            true,
-        );
+        let mut line_builder =
+            LineBuilder::new(metadata, Some(timeline), field_mapping, false, false, true);
 
         let mut data = Record::new();
 

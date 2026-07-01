@@ -29,20 +29,8 @@ pub struct FRNHexParser {
 }
 impl FRNHexParser {
     fn new(prefix: &str) -> Self {
-        let sequence = FieldName::new(
-            format!("{prefix}sequence_number"),
-            false,
-            None,
-            None,
-            None,
-        );
-        let record = FieldName::new(
-            format!("{prefix}record_number"),
-            false,
-            None,
-            None,
-            None,
-        );
+        let sequence = FieldName::new(format!("{prefix}sequence_number"), false, None, None, None);
+        let record = FieldName::new(format!("{prefix}record_number"), false, None, None, None);
         Self { sequence, record }
     }
 }
@@ -125,13 +113,8 @@ pub struct FileAttributesParser {
 }
 impl FileAttributesParser {
     fn new() -> Self {
-        let default_field = FieldName::new(
-            "file_attribute_raw".to_string(),
-            false,
-            None,
-            None,
-            None,
-        );
+        let default_field =
+            FieldName::new("file_attribute_raw".to_string(), false, None, None, None);
         let mut file_attributes = IndexMap::new();
         file_attributes.insert(
             'A',
@@ -306,13 +289,7 @@ impl FileAttributesParser {
         );
         file_attributes.insert(
             'e',
-            FieldName::new(
-                "file_attributes_ea".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
+            FieldName::new("file_attributes_ea".to_string(), false, None, None, None),
         );
         file_attributes.insert(
             'o',
@@ -423,27 +400,9 @@ pub struct SignedHashParser {
 }
 impl SignedHashParser {
     fn new() -> Self {
-        let md5 = FieldName::new(
-            "file_pe_md5".to_string(),
-            false,
-            None,
-            None,
-            None,
-        );
-        let sha1 = FieldName::new(
-            "file_pe_sha1".to_string(),
-            false,
-            None,
-            None,
-            None,
-        );
-        let sha256 = FieldName::new(
-            "file_pe_sha256".to_string(),
-            false,
-            None,
-            None,
-            None,
-        );
+        let md5 = FieldName::new("file_pe_md5".to_string(), false, None, None, None);
+        let sha1 = FieldName::new("file_pe_sha1".to_string(), false, None, None, None);
+        let sha256 = FieldName::new("file_pe_sha256".to_string(), false, None, None, None);
         Self { md5, sha1, sha256 }
     }
 }

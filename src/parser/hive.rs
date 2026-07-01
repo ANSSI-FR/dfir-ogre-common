@@ -897,7 +897,7 @@ mod tests {
         assert_eq!(expected_lines, lines.len());
         let data = lines[2].as_object().unwrap();
 
-        let key_name = data.get("name:key_name").unwrap().as_str().unwrap();
+        let key_name = data.get("name").unwrap().as_str().unwrap();
         assert_eq!(key_name, "with-single-level-subkey");
     }
 

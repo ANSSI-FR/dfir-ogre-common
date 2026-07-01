@@ -442,11 +442,7 @@ impl LineBuilder {
                 if let Some(timeline_builder) = timeline_builder
                     && !tlfields.fields.is_empty()
                 {
-                    timeline_builder.add_field_value(
-                        &tlfields.fields,
-                        field_name.name(),
-                        &value,
-                    );
+                    timeline_builder.add_field_value(&tlfields.fields, field_name.name(), &value);
                 }
                 Some(&tlfields.nested)
             } else {
@@ -454,11 +450,7 @@ impl LineBuilder {
             };
 
             if let Value::Object(mut inner_data) = value {
-                let mut inner_insert = LineData::with_capacity(
-                    field_mapping.len(),
-                    false,
-                    false,
-                );
+                let mut inner_insert = LineData::with_capacity(field_mapping.len(), false, false);
                 // Recursive processing
                 Self::build_record(
                     &mut inner_data,
@@ -523,11 +515,7 @@ impl LineBuilder {
                     && let Some(tl_fields) = timeline_fields
                     && let Some(fields) = tl_fields.get(output_name)
                 {
-                    timeline_builder.add_field_value(
-                        &fields.fields,
-                        name.name(),
-                        &value_array,
-                    );
+                    timeline_builder.add_field_value(&fields.fields, name.name(), &value_array);
                 }
 
                 line_data.add_data(name, value_array);
@@ -600,11 +588,8 @@ impl LineBuilder {
                                 .and_then(|tl| tl.get(output_name))
                                 .map(|tf| &tf.nested);
 
-                            let mut inner_insert = LineData::with_capacity(
-                                fields.len(),
-                                false,
-                                false,
-                            );
+                            let mut inner_insert =
+                                LineData::with_capacity(fields.len(), false, false);
                             // Recursive processing
                             Self::build_record(
                                 &mut inner_data,
@@ -654,11 +639,7 @@ impl LineBuilder {
         };
         match value {
             Value::Object(mut inner_data) => {
-                let mut inner_insert = LineData::with_capacity(
-                    inner_data.len(),
-                    false,
-                    false,
-                );
+                let mut inner_insert = LineData::with_capacity(inner_data.len(), false, false);
                 // Recursive processing
                 Self::build_record(
                     &mut inner_data,
@@ -694,10 +675,7 @@ impl LineBuilder {
                     }
                 }
 
-                line_data.add_data(
-                    &FieldName::new(insert_key, false, None, None, None),
-                    value,
-                );
+                line_data.add_data(&FieldName::new(insert_key, false, None, None, None), value);
             }
         }
         Ok(())
@@ -926,13 +904,7 @@ mod tests {
         };
 
         let no_values = Field::Single {
-            name: FieldName::new(
-                "no_values".to_owned(),
-                false,
-                None,
-                None,
-                None,
-            ),
+            name: FieldName::new("no_values".to_owned(), false, None, None, None),
             parser: Parser::Int(),
             default_value: None,
         };
@@ -942,8 +914,7 @@ mod tests {
 
         let metadata = Metadata::new("test".into());
 
-        let mut line_builder =
-            LineBuilder::new(metadata, None, field_mapping, false, false, true);
+        let mut line_builder = LineBuilder::new(metadata, None, field_mapping, false, false, true);
         let mut data = Record::new();
 
         data.insert(
@@ -1072,8 +1043,7 @@ mod tests {
         let field_mapping = FieldMapping::new(mapping, None);
 
         let metadata = Metadata::new("test".into());
-        let mut line_builder =
-            LineBuilder::new(metadata, None, field_mapping, false, false, true);
+        let mut line_builder = LineBuilder::new(metadata, None, field_mapping, false, false, true);
         let mut data = Record::new();
 
         data.insert(
@@ -1352,13 +1322,7 @@ mod tests {
                         default_value: None,
                     },
                     Field::Single {
-                        name: FieldName::new(
-                            "comment".to_owned(),
-                            false,
-                            None,
-                            None,
-                            None,
-                        ),
+                        name: FieldName::new("comment".to_owned(), false, None, None, None),
                         parser: Parser::String(),
                         default_value: None,
                     },
@@ -1432,13 +1396,7 @@ mod tests {
                 default_value: None,
             },
             Field::Array(ArrayField::new(Field::Object {
-                name: FieldName::new(
-                    "array".to_owned(),
-                    false,
-                    None,
-                    None,
-                    None,
-                ),
+                name: FieldName::new("array".to_owned(), false, None, None, None),
                 ignore: false,
                 fields: vec![Field::Single {
                     name: FieldName::new(
@@ -1793,8 +1751,7 @@ mod tests {
         id: &str,
         message: &str,
     ) -> String {
-        let mut line_builder =
-            LineBuilder::new(metadata, None, field_mapping, true, true, true);
+        let mut line_builder = LineBuilder::new(metadata, None, field_mapping, true, true, true);
         let mut record = Record::new();
         record.add("id", Value::String(id.to_owned()));
         record.add("message", Value::String(message.to_owned()));

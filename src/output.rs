@@ -582,7 +582,11 @@ mod tests {
         let mut params = HashMap::new();
         params.insert(COMPRESSION_LEVEL.to_owned(), "fast".to_owned());
         let run_config = RunConfiguration::new(
-            vec![json_output_config("bad_compression", &output_folder, params)],
+            vec![json_output_config(
+                "bad_compression",
+                &output_folder,
+                params,
+            )],
             true,
             None,
         );
@@ -604,13 +608,7 @@ mod tests {
         let output_folder = test_output_folder("output_multiple_plain");
         let field_mapping = FieldMapping::new(
             vec![Field::Single {
-                name: FieldName::new(
-                    "event".to_owned(),
-                    false,
-                    None,
-                    None,
-                    None,
-                ),
+                name: FieldName::new("event".to_owned(), false, None, None, None),
                 parser: Parser::String(),
                 default_value: None,
             }],

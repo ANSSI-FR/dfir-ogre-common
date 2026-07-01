@@ -331,7 +331,7 @@ mod tests {
             .unwrap()
             .as_object()
             .unwrap()
-            .get("timestamp:creation_date")
+            .get("timestamp")
             .unwrap()
             .as_str()
             .unwrap();

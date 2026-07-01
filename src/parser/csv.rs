@@ -800,11 +800,7 @@ mod tests {
 
         //second line
         let line = lines[1].as_object().unwrap();
-        let _subsystem = line
-            .get("pe_subsystem")
-            .unwrap()
-            .as_str()
-            .unwrap();
+        let _subsystem = line.get("pe_subsystem").unwrap().as_str().unwrap();
 
         let file_path = line.get("file_path").unwrap().as_str().unwrap();
         assert_eq!("\\$Bitmap", file_path)

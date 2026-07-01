@@ -354,13 +354,7 @@ mod tests {
                             default_value: None,
                         },
                         Field::Single {
-                            name: FieldName::new(
-                                "success".to_owned(),
-                                false,
-                                None,
-                                None,
-                                None,
-                            ),
+                            name: FieldName::new("success".to_owned(), false, None, None, None),
                             parser: Parser::Bool(),
                             default_value: None,
                         },

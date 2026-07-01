@@ -460,13 +460,7 @@ impl FieldParserTree {
                     let field_parser = FieldParser::new(
                         input_name.to_owned(),
                         vec![Field::Single {
-                            name: FieldName::new(
-                                input_name.to_owned(),
-                                false,
-                                None,
-                                None,
-                                None,
-                            ),
+                            name: FieldName::new(input_name.to_owned(), false, None, None, None),
                             parser: defautl.clone(),
                             default_value: None,
                         }],

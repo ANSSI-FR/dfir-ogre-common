@@ -337,13 +337,7 @@ mod tests {
                             default_value: None,
                         },
                         Field::Single {
-                            name: FieldName::new(
-                                "message".to_owned(),
-                                false,
-                                None,
-                                None,
-                                None,
-                            ),
+                            name: FieldName::new("message".to_owned(), false, None, None, None),
                             parser: Parser::String(),
                             default_value: None,
                         },
