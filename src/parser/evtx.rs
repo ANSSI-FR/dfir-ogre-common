@@ -2,6 +2,7 @@ use crate::{
     FieldParserTree, Metadata, Output, Parser, Record, RunConfiguration, RunReport, Value,
     configuration::PluginConfiguration,
     errors::Error,
+    field::MultiInputContext,
     parser::{json::parse_json_object, runner},
 };
 use chrono::DateTime;
@@ -87,7 +88,15 @@ fn parse_record(
     match get_event(record) {
         Ok(json) => {
             if let JsonValue::Object(map) = json {
-                match parse_json_object(map, Some(parser_tree), parse_unknown, tuple) {
+                let mut multi_input_context =
+                    MultiInputContext::new(parser_tree.multi_input_group_count);
+                match parse_json_object(
+                    map,
+                    Some(parser_tree),
+                    parse_unknown,
+                    tuple,
+                    &mut multi_input_context,
+                ) {
                     Ok(()) => {
                         if let Err(e) = output.write(tuple) {
                             report.add_error(e.to_string());

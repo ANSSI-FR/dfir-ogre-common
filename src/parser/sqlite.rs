@@ -1,6 +1,7 @@
 use crate::{
     Error, Metadata, Output, Record, RunConfiguration, RunReport, Value,
-    configuration::PluginConfiguration, field_mapping::FieldParserTree, parser::runner,
+    configuration::PluginConfiguration, field::MultiInputContext, field_mapping::FieldParserTree,
+    parser::runner,
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as enc64};
@@ -81,14 +82,17 @@ pub fn parse(
     let mut record = Record::new();
     let mut rows = stmt.query([])?;
     let mut num_row = 0;
+    let mut multi_input_context = MultiInputContext::new(field_parsers.multi_input_group_count);
 
     while let Some(row) = rows.next()? {
+        multi_input_context.clear();
         if let Err(err) = process_row(
             &mut output,
             &column_names,
             &mut record,
             row,
             &mut field_parsers,
+            &mut multi_input_context,
         ) {
             record.clear();
 
@@ -113,6 +117,7 @@ fn process_row(
     record: &mut Record,
     row: &rusqlite::Row<'_>,
     field_parsers: &mut FieldParserTree,
+    multi_input_context: &mut MultiInputContext,
 ) -> Result<(), Error> {
     for (pos, name) in column_names.iter().enumerate() {
         let mut parser_opt = field_parsers.get_parser(name);
@@ -123,24 +128,32 @@ fn process_row(
                 None => record.add(name, Value::Null()),
             },
             rusqlite::types::ValueRef::Integer(v) => match &mut parser_opt {
-                Some(parser) => parser.parse(Some(&v.to_string()), record)?,
+                Some(parser) => {
+                    parser.parse_with_context(Some(&v.to_string()), record, multi_input_context)?
+                }
                 None => record.add(name, Value::Int(v)),
             },
             rusqlite::types::ValueRef::Real(v) => match &mut parser_opt {
-                Some(parser) => parser.parse(Some(&v.to_string()), record)?,
+                Some(parser) => {
+                    parser.parse_with_context(Some(&v.to_string()), record, multi_input_context)?
+                }
                 None => record.add(name, Value::Float(v)),
             },
             rusqlite::types::ValueRef::Text(items) => {
                 let converted = String::from_utf8_lossy(items).to_string();
                 match &mut parser_opt {
-                    Some(parser) => parser.parse(Some(&converted), record)?,
+                    Some(parser) => {
+                        parser.parse_with_context(Some(&converted), record, multi_input_context)?
+                    }
                     None => record.add(name, Value::String(converted)),
                 }
             }
             rusqlite::types::ValueRef::Blob(items) => {
                 let converted = enc64.encode(items);
                 match &mut parser_opt {
-                    Some(parser) => parser.parse(Some(&converted), record)?,
+                    Some(parser) => {
+                        parser.parse_with_context(Some(&converted), record, multi_input_context)?
+                    }
                     None => record.add(name, Value::String(converted)),
                 }
             }

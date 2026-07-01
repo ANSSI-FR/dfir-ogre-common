@@ -10,6 +10,7 @@ use crate::{
     Error, Field, FieldParser, Metadata, Output, Parser, Record, RunConfiguration, RunReport,
     Value,
     configuration::{PluginConfiguration, encoding_reader_builder},
+    field::MultiInputContext,
     field_mapping::ParserType,
     parser::runner,
 };
@@ -156,6 +157,8 @@ fn parse(
             field_map.insert(key.to_string(), parser.clone());
         }
     }
+    let mut multi_input_context =
+        MultiInputContext::new(field_mapping.field_parser_tree.multi_input_group_count);
 
     //Initialize tracking variables for line processing
     let mut run_report = RunReport::new();
@@ -175,6 +178,7 @@ fn parse(
                 &mut record,
                 line_number,
                 &fail_policy,
+                &mut multi_input_context,
             )
         {
             record.clear();
@@ -220,14 +224,18 @@ fn build_record(
     record: &mut Record,
     line_number: usize,
     fail_policy: &FailPolicy,
+    multi_input_context: &mut MultiInputContext,
 ) -> Result<(), Error> {
     if let Some(caps) = re.captures(line) {
         if !record.0.is_empty() {
             output.write(record)?;
         }
+        multi_input_context.clear();
         for (key, field) in field_map {
             match caps.name(key) {
-                Some(input) => field.parse(Some(input.as_str()), record)?,
+                Some(input) => {
+                    field.parse_with_context(Some(input.as_str()), record, multi_input_context)?
+                }
                 None => field.set_value(Value::Null(), record)?,
             }
         }

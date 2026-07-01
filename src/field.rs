@@ -7,10 +7,7 @@ use crate::{
 use indexmap::IndexMap;
 
 use pyo3::prelude::*;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 
 /// Defines parsing strategies for different data types.
 /// it is used in data ingestion and transformation pipelines to specify how raw input should be interpreted and converted into structured `Value` types.
@@ -371,6 +368,78 @@ impl MultiParser {
     }
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct MultiInputContext {
+    groups: Vec<MultiInputGroupState>,
+}
+
+#[derive(Debug, Default)]
+struct MultiInputGroupState {
+    values: Vec<Option<Option<String>>>,
+    seen: usize,
+}
+
+impl MultiInputContext {
+    pub(crate) fn new(group_count: usize) -> Self {
+        let mut groups = Vec::with_capacity(group_count);
+        groups.resize_with(group_count, MultiInputGroupState::default);
+        Self { groups }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        for group in &mut self.groups {
+            group.clear();
+        }
+    }
+
+    fn insert(
+        &mut self,
+        group_index: usize,
+        input_index: usize,
+        input_count: usize,
+        input: Option<&str>,
+    ) -> bool {
+        self.ensure_group(group_index, input_count);
+        let group = &mut self.groups[group_index];
+        if group.values[input_index].is_none() {
+            group.seen += 1;
+        }
+        group.values[input_index] = Some(input.map(|value| value.to_string()));
+        group.seen == input_count
+    }
+
+    fn values(&self, group_index: usize) -> &[Option<Option<String>>] {
+        &self.groups[group_index].values
+    }
+
+    fn clear_group(&mut self, group_index: usize) {
+        self.groups[group_index].clear();
+    }
+
+    fn ensure_group(&mut self, group_index: usize, input_count: usize) {
+        if self.groups.len() <= group_index {
+            self.groups
+                .resize_with(group_index + 1, MultiInputGroupState::default);
+        }
+        self.groups[group_index].ensure_len(input_count);
+    }
+}
+
+impl MultiInputGroupState {
+    fn ensure_len(&mut self, input_count: usize) {
+        if self.values.len() < input_count {
+            self.values.resize_with(input_count, || None);
+        }
+    }
+
+    fn clear(&mut self) {
+        for value in &mut self.values {
+            *value = None;
+        }
+        self.seen = 0;
+    }
+}
+
 #[derive(Clone, Debug)]
 #[pyclass(from_py_object)]
 /// Metadata describing a field's mapping between input and output.
@@ -618,6 +687,26 @@ impl Field {
         }
     }
 
+    pub(crate) fn has_input_name(&self, input_name: &str) -> bool {
+        match self {
+            Field::Single {
+                name,
+                parser: _,
+                default_value: _,
+            } => name.input_name() == input_name,
+            Field::Multi(field) => field
+                .input_fields
+                .iter()
+                .any(|field| field.has_input_name(input_name)),
+            Field::Object {
+                name,
+                fields: _,
+                ignore: _,
+            } => name.input_name() == input_name,
+            Field::Array(field) => field.0.has_input_name(input_name),
+        }
+    }
+
     pub fn ignore(&self) -> bool {
         match self {
             Field::Single {
@@ -706,7 +795,10 @@ impl Field {
                     }
                 }
             }
-            Field::Multi(multi) => multi.parse(name, input, output)?,
+            Field::Multi(multi) => {
+                let mut context = MultiInputContext::default();
+                multi.parse(name, input, output, &mut context)?
+            }
             Field::Object {
                 name: _,
                 fields: _,
@@ -717,6 +809,24 @@ impl Field {
             Field::Array(field) => field.0.parse(name, input, output)?,
         }
         Ok(())
+    }
+
+    pub(crate) fn parse_with_context(
+        &self,
+        name: &str,
+        input: Option<&str>,
+        output: &mut Record,
+        multi_input_context: &mut MultiInputContext,
+    ) -> Result<(), Error> {
+        match self {
+            Field::Multi(multi) => multi.parse(name, input, output, multi_input_context),
+            Field::Array(field) => {
+                field
+                    .0
+                    .parse_with_context(name, input, output, multi_input_context)
+            }
+            _ => self.parse(name, input, output),
+        }
     }
 
     /// Attempts to extract a value from the input string based on the field's configuration.
@@ -868,13 +978,11 @@ impl Field {
 /// * `input_fields` – the source fields whose values are collected.
 /// * `parser` – strategy (e.g., joining strings) that merges the values.
 /// * `output_field` – metadata for the resulting combined field.
-/// * `input_values` – thread‑safe cache storing the intermediate string values
-///   for each input field.
 pub struct MultiInputField {
     pub input_fields: Vec<Field>,
     pub parser: MultiParser,
     pub output_field: FieldName,
-    pub input_values: Arc<Mutex<HashMap<String, Option<String>>>>,
+    pub group_index: usize,
 }
 
 #[pymethods]
@@ -897,17 +1005,16 @@ impl MultiInputField {
             input_fields,
             parser,
             output_field,
-            input_values: Arc::new(Mutex::new(HashMap::new())),
+            group_index: 0,
         }
     }
 }
 impl MultiInputField {
     /// Parses an input value for a specific field and accumulates it into a combined output.
     ///
-    /// This method stores the input value under its corresponding field name in an internal cache
-    /// (`input_values`). Once all expected input fields have been received (i.e., the number of
-    /// fields matches the number of stored values), it triggers the `MultiParser` to combine
-    /// the values into a single output field.
+    /// This method stores the input value under its corresponding field name in a record-scoped
+    /// `MultiInputContext`. Once all expected input fields have been received, it triggers the
+    /// `MultiParser` to combine the values into a single output field.
     ///
     /// # Arguments
     ///
@@ -922,18 +1029,33 @@ impl MultiInputField {
     ///
     /// # Behavior
     ///
-    /// - Input values are stored in a thread-safe `HashMap` protected by a `Mutex`.
+    /// - Input values are stored in the record-scoped `MultiInputContext`.
     /// - The parser only runs when all `input_fields` have been received.
-    /// - After parsing, the input cache is cleared to prepare for the next round.
+    /// - After parsing, the current group is cleared to prepare for the next round.
     ///
-    pub fn parse(&self, name: &str, input: Option<&str>, output: &mut Record) -> Result<(), Error> {
-        let mut input_values = self.input_values.lock().expect("mutex lock panicked");
+    pub(crate) fn parse(
+        &self,
+        name: &str,
+        input: Option<&str>,
+        output: &mut Record,
+        multi_input_context: &mut MultiInputContext,
+    ) -> Result<(), Error> {
+        let Some(input_index) = self
+            .input_fields
+            .iter()
+            .position(|field| field.has_input_name(name))
+        else {
+            return Ok(());
+        };
+        let input_count = self.input_fields.len();
 
-        input_values.insert(name.to_string(), input.map(|s| s.to_string()));
-
-        if self.input_fields.len() == input_values.len() {
+        if multi_input_context.insert(self.group_index, input_index, input_count, input) {
             let mut ordered_dict = IndexMap::new();
-            for field in &self.input_fields {
+            for (field, value) in self
+                .input_fields
+                .iter()
+                .zip(multi_input_context.values(self.group_index))
+            {
                 if let Field::Single {
                     name: input_field,
                     parser: _,
@@ -941,14 +1063,16 @@ impl MultiInputField {
                 } = field
                 {
                     let key = input_field.input_name();
-                    if let Some(val) = input_values.get(key) {
-                        ordered_dict.insert(key.to_owned(), val.clone());
+                    if let Some(value) = value {
+                        ordered_dict.insert(key.to_owned(), value.clone());
                     }
                 }
             }
-            self.parser
-                .parse(&ordered_dict, self.output_field.output_name(), output)?;
-            input_values.clear();
+            let result = self
+                .parser
+                .parse(&ordered_dict, self.output_field.output_name(), output);
+            multi_input_context.clear_group(self.group_index);
+            result?;
         }
         Ok(())
     }

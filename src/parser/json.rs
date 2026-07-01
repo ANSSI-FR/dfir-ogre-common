@@ -4,7 +4,7 @@ use std::{fs::File, path::Path};
 use crate::field_mapping::ParserType;
 use crate::{
     Error, FieldParser, FieldParserTree, Metadata, Output, Parser, Record, RunConfiguration,
-    RunReport, Value, configuration::PluginConfiguration, parser::runner,
+    RunReport, Value, configuration::PluginConfiguration, field::MultiInputContext, parser::runner,
 };
 
 use pyo3::prelude::*;
@@ -68,12 +68,14 @@ fn parse_json_internal(
         ))?
         .get_field_parser_tree();
     let mut output = Output::new(run_config, plugin_config, metadata, None)?;
+    let mut multi_input_context = MultiInputContext::new(parser_tree.multi_input_group_count);
 
     parse(
         json,
         &mut Record::new(),
         &mut output,
         &mut parser_tree,
+        &mut multi_input_context,
         &mut report,
     );
 
@@ -104,7 +106,9 @@ fn parse_jsonl_internal(
 
     let mut report = RunReport::new();
     let mut record = Record::new();
+    let mut multi_input_context = MultiInputContext::new(parser_tree.multi_input_group_count);
     for line in reader.lines() {
+        multi_input_context.clear();
         match line {
             Ok(line) => {
                 let json: Result<JsonValue, serde_json::Error> = serde_json::from_str(&line);
@@ -114,6 +118,7 @@ fn parse_jsonl_internal(
                         &mut record,
                         &mut output,
                         &mut parser_tree,
+                        &mut multi_input_context,
                         &mut report,
                     ),
                     Err(e) => report.add_error(format!("{e}")),
@@ -132,6 +137,7 @@ fn parse(
     record: &mut Record,
     output: &mut Output,
     parser_tree: &mut FieldParserTree,
+    multi_input_context: &mut MultiInputContext,
     report: &mut RunReport,
 ) {
     let parse_unknown = if let Some(Parser::Ignore()) = parser_tree.default_parser {
@@ -141,7 +147,13 @@ fn parse(
     };
 
     if let JsonValue::Object(map) = json {
-        match parse_json_object(map, Some(parser_tree), parse_unknown, record) {
+        match parse_json_object(
+            map,
+            Some(parser_tree),
+            parse_unknown,
+            record,
+            multi_input_context,
+        ) {
             Ok(()) => {
                 if let Err(e) = output.write(record) {
                     report.add_error(e.to_string())
@@ -157,10 +169,11 @@ fn parse_mapped_string_field(
     value: &str,
     parser_tree: &FieldParserTree,
     record: &mut Record,
+    multi_input_context: &mut MultiInputContext,
 ) -> Result<bool, Error> {
     match parser_tree.parsers.get(input_name) {
         Some(ParserType::Field { parser }) => {
-            parser.parse(Some(value), record)?;
+            parser.parse_with_context(Some(value), record, multi_input_context)?;
             Ok(true)
         }
         _ => Ok(false),
@@ -185,24 +198,37 @@ pub fn parse_json_object(
     parser_tree: Option<&FieldParserTree>,
     parse_unknown: bool,
     record: &mut Record,
+    multi_input_context: &mut MultiInputContext,
 ) -> Result<(), Error> {
     for (name, json_value) in json {
         match parser_tree {
             Some(p_tree) => {
                 if let JsonValue::String(value) = &json_value
-                    && parse_mapped_string_field(&name, value, p_tree, record)?
+                    && parse_mapped_string_field(&name, value, p_tree, record, multi_input_context)?
                 {
                     continue;
                 }
 
-                let value_opt = get_values(&name, json_value, Some(p_tree), parse_unknown)?;
+                let value_opt = get_values(
+                    &name,
+                    json_value,
+                    Some(p_tree),
+                    parse_unknown,
+                    multi_input_context,
+                )?;
                 if let Some(value) = value_opt {
                     p_tree.set_field_value(&name, value, record)?;
                 }
             }
             None => {
                 if parse_unknown {
-                    let value_opt = get_values(&name, json_value, parser_tree, parse_unknown)?;
+                    let value_opt = get_values(
+                        &name,
+                        json_value,
+                        parser_tree,
+                        parse_unknown,
+                        multi_input_context,
+                    )?;
                     if let Some(value) = value_opt {
                         record.add(&name, value);
                     }
@@ -219,6 +245,7 @@ fn get_values(
     json: JsonValue,
     parser_tree: Option<&FieldParserTree>,
     parse_unknown: bool,
+    multi_input_context: &mut MultiInputContext,
 ) -> Result<Option<Value>, Error> {
     let value = match json {
         JsonValue::Null => Some(Value::Null()),
@@ -252,9 +279,13 @@ fn get_values(
                     (JsonValue::String(value), Some(parser)) => {
                         parser.parse_into_value(Some(&value))?
                     }
-                    (json_value, _) => {
-                        get_values(input_name, json_value, parser_tree, parse_unknown)?
-                    }
+                    (json_value, _) => get_values(
+                        input_name,
+                        json_value,
+                        parser_tree,
+                        parse_unknown,
+                        multi_input_context,
+                    )?,
                 };
                 if let Some(value) = value_opt {
                     val_array.push(value);
@@ -268,11 +299,14 @@ fn get_values(
                     ParserType::Array { field } => match field.0.as_ref() {
                         ParserType::Object { field_parsers } => {
                             let mut record = Record::with_capacity(map.len());
+                            let mut element_context =
+                                MultiInputContext::new(field_parsers.multi_input_group_count);
                             parse_json_object(
                                 map,
                                 Some(field_parsers),
                                 parse_unknown,
                                 &mut record,
+                                &mut element_context,
                             )?;
                             Some(Value::Object(record))
                         }
@@ -280,7 +314,13 @@ fn get_values(
                     },
                     ParserType::Object { field_parsers } => {
                         let mut record = Record::with_capacity(map.len());
-                        parse_json_object(map, Some(field_parsers), parse_unknown, &mut record)?;
+                        parse_json_object(
+                            map,
+                            Some(field_parsers),
+                            parse_unknown,
+                            &mut record,
+                            multi_input_context,
+                        )?;
                         Some(Value::Object(record))
                     }
                     _ => None,
@@ -288,7 +328,13 @@ fn get_values(
                 None => {
                     if parse_unknown {
                         let mut record = Record::with_capacity(map.len());
-                        parse_json_object(map, None, parse_unknown, &mut record)?;
+                        parse_json_object(
+                            map,
+                            None,
+                            parse_unknown,
+                            &mut record,
+                            multi_input_context,
+                        )?;
                         Some(Value::Object(record))
                     } else {
                         None
@@ -298,7 +344,7 @@ fn get_values(
             None => {
                 if parse_unknown {
                     let mut record = Record::with_capacity(map.len());
-                    parse_json_object(map, None, parse_unknown, &mut record)?;
+                    parse_json_object(map, None, parse_unknown, &mut record, multi_input_context)?;
                     Some(Value::Object(record))
                 } else {
                     None
@@ -318,7 +364,8 @@ mod tests {
 
     use crate::{
         DateInputCodec, Field, FieldMapping, FieldName, OutputConfiguration, Parser,
-        configuration::DataTypeMapping, field::ArrayField,
+        configuration::DataTypeMapping,
+        field::{ArrayField, MultiInputField, MultiParser},
     };
 
     use super::*;
@@ -421,6 +468,68 @@ mod tests {
             ],
             None,
         )
+    }
+
+    fn multi_input_mapping() -> FieldMapping {
+        FieldMapping::new(
+            vec![Field::Multi(MultiInputField::new(
+                vec![
+                    Field::Single {
+                        name: FieldName::new("left".to_owned(), false, None, None, None),
+                        parser: Parser::String(),
+                        default_value: None,
+                    },
+                    Field::Single {
+                        name: FieldName::new("right".to_owned(), false, None, None, None),
+                        parser: Parser::String(),
+                        default_value: None,
+                    },
+                ],
+                FieldName::new(
+                    "joined".to_owned(),
+                    false,
+                    Some("joined".to_owned()),
+                    None,
+                    None,
+                ),
+                MultiParser::Join("-".to_owned(), false),
+            ))],
+            None,
+        )
+    }
+
+    #[test]
+    fn jsonl_multi_input_partials_do_not_leak_between_records() {
+        let output_folder = test_folder("jsonl_multi_input_record_scoped");
+        let input_path = output_folder.join("input.jsonl");
+        fs::write(
+            &input_path,
+            "{\"left\":\"stale-left\"}\n{\"right\":\"fresh-right\"}\n{\"left\":\"good-left\",\"right\":\"good-right\"}\n",
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![output_conf("multi", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_multi", multi_input_mapping());
+
+        let report = parse_jsonl(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("host-json".into()),
+        );
+
+        assert_eq!(report.num_errors, 0);
+        let output_path = output_folder.join("multi.json_multi.jsonl");
+        let output = fs::read_to_string(output_path).unwrap();
+        let records: Vec<serde_json::Value> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+
+        assert_eq!(records.len(), 3);
+        assert!(records[0]["joined"].is_null());
+        assert!(records[1]["joined"].is_null());
+        assert_eq!(records[2]["joined"], "good-left-good-right");
     }
 
     #[test]

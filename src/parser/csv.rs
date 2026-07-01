@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 use crate::{
     Error, FieldParser, Metadata, Output, Record, RunConfiguration, RunReport,
     configuration::{PluginConfiguration, encoding_reader_builder},
+    field::MultiInputContext,
     parser::runner,
 };
 const BUFFER_CAPACITY: usize = 1024 * 1024 * 5;
@@ -110,12 +111,14 @@ fn parse(
 
     let mut output = Output::new(run_config, plugin_config, metadata, None)?;
     let mut run_report = RunReport::new();
+    let mut multi_input_context = MultiInputContext::new(field_parsers.multi_input_group_count);
     parse_lines(
         reader,
         &mut converters,
         &mut output,
         log_before_fail,
         &mut run_report,
+        &mut multi_input_context,
     );
     runner::finalize_output(&mut output, &mut run_report);
 
@@ -141,16 +144,22 @@ fn parse_lines(
     output: &mut Output,
     log_before_fail: usize,
     run_report: &mut RunReport,
+    multi_input_context: &mut MultiInputContext,
 ) {
     let mut tuple = Record::new();
 
     for (line_nb, record) in reader.records().enumerate() {
+        multi_input_context.clear();
         match record {
             Ok(string_record) => {
                 for (column, data) in string_record.iter().enumerate() {
                     match &mut converters[column] {
                         Some(converter) => {
-                            if let Err(e) = converter.parse(Some(data), &mut tuple) {
+                            if let Err(e) = converter.parse_with_context(
+                                Some(data),
+                                &mut tuple,
+                                multi_input_context,
+                            ) {
                                 let err = Error::ParsingColumn(line_nb + 1, e.to_string(), column);
                                 if runner::record_error(
                                     run_report,

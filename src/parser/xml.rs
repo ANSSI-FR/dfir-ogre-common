@@ -5,7 +5,7 @@ use std::{fs::File, path::Path};
 
 use crate::{
     Error, FieldParserTree, Metadata, Output, Record, RunConfiguration, RunReport, Value,
-    configuration::PluginConfiguration, field_mapping, parser::runner,
+    configuration::PluginConfiguration, field::MultiInputContext, field_mapping, parser::runner,
 };
 
 use pyo3::prelude::*;
@@ -73,9 +73,16 @@ pub fn parse(
     let result = xpath_expr.evaluate(&xpath_context, document.root())?;
 
     if let sxd_xpath::Value::Nodeset(nodeset) = result {
+        let mut multi_input_context = MultiInputContext::new(parser_tree.multi_input_group_count);
         for node in nodeset.document_order() {
-            let record_opt =
-                parse_record(&node, &mut parser_tree, &mut xpath_cache, &xpath_context);
+            multi_input_context.clear();
+            let record_opt = parse_record(
+                &node,
+                &mut parser_tree,
+                &mut xpath_cache,
+                &xpath_context,
+                &mut multi_input_context,
+            );
 
             match record_opt {
                 Ok(mut record) => {
@@ -98,6 +105,7 @@ fn parse_record(
     parser_tree: &mut FieldParserTree,
     xpath_cache: &mut XPathCache,
     context: &sxd_xpath::Context,
+    multi_input_context: &mut MultiInputContext,
 ) -> Result<Record, Error> {
     let mut record = Record::new();
     for (xpath, parser_type) in parser_tree.parsers.iter_mut() {
@@ -115,14 +123,24 @@ fn parse_record(
                 //handle signle value fields
                 match node_set.iter().next() {
                     Some(node) => {
-                        parser.parse(Some(&node.string_value()), &mut record)?;
+                        parser.parse_with_context(
+                            Some(&node.string_value()),
+                            &mut record,
+                            multi_input_context,
+                        )?;
                     }
-                    None => parser.parse(None, &mut record)?,
+                    None => parser.parse_with_context(None, &mut record, multi_input_context)?,
                 }
             }
             field_mapping::ParserType::Object { field_parsers } => {
                 if let Some(node) = node_set.iter().next() {
-                    let object = parse_record(&node, field_parsers, xpath_cache, context)?;
+                    let object = parse_record(
+                        &node,
+                        field_parsers,
+                        xpath_cache,
+                        context,
+                        multi_input_context,
+                    )?;
                     let name = field_parsers.field_name.as_ref();
                     if let Some(name) = name {
                         record.add(name.output_name(), Value::Object(object));
@@ -149,7 +167,15 @@ fn parse_record(
                     field_mapping::ParserType::Object { field_parsers } => {
                         let mut value_array = Vec::with_capacity(node_set.size());
                         for node in node_set {
-                            let object = parse_record(&node, field_parsers, xpath_cache, context)?;
+                            let mut element_context =
+                                MultiInputContext::new(field_parsers.multi_input_group_count);
+                            let object = parse_record(
+                                &node,
+                                field_parsers,
+                                xpath_cache,
+                                context,
+                                &mut element_context,
+                            )?;
                             value_array.push(Value::Object(object));
                         }
                         let name = field_parsers.field_name.as_ref();

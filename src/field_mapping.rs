@@ -1,7 +1,7 @@
 use crate::{
     FieldName, Parser, Record, Value,
     errors::Error,
-    field::{ArrayField, Field},
+    field::{ArrayField, Field, MultiInputContext},
 };
 
 use indexmap::IndexMap;
@@ -64,10 +64,8 @@ impl FieldParser {
     /// This method may return an error if any field parser encounters invalid input,
     /// missing data, or a parsing issue.
     pub fn parse(&self, input: Option<&str>, output: &mut Record) -> Result<(), Error> {
-        for field in &self.fields {
-            field.parse(&self.input_name, input, output)?;
-        }
-        Ok(())
+        let mut multi_input_context = MultiInputContext::default();
+        self.parse_with_context(input, output, &mut multi_input_context)
     }
 
     /// Parses the input string and returns the first non-None value from the registered fields.
@@ -106,6 +104,20 @@ impl FieldParser {
     /// Returns the name of the input source associated with this parser.
     pub fn input_name(&self) -> String {
         self.input_name.clone()
+    }
+}
+
+impl FieldParser {
+    pub(crate) fn parse_with_context(
+        &self,
+        input: Option<&str>,
+        output: &mut Record,
+        multi_input_context: &mut MultiInputContext,
+    ) -> Result<(), Error> {
+        for field in &self.fields {
+            field.parse_with_context(&self.input_name, input, output, multi_input_context)?;
+        }
+        Ok(())
     }
 }
 
@@ -152,6 +164,7 @@ pub struct FieldParserTree {
     pub default_parser: Option<Parser>,
     pub ignore_parsing: bool,
     pub has_primary_keys: bool,
+    pub multi_input_group_count: usize,
 }
 impl FieldParserTree {
     /// Creates a new `FieldParserTree` from a list of `Field` definitions.
@@ -171,8 +184,14 @@ impl FieldParserTree {
     ) -> Self {
         let mut parsers: IndexMap<String, ParserType> = IndexMap::with_capacity(mapping.len());
         let mut output_fields = Vec::with_capacity(mapping.len());
-        let has_primary_keys =
-            Self::parse_mapping(mapping, &mut parsers, &mut output_fields, &default_parser);
+        let mut multi_input_group_count = 0;
+        let has_primary_keys = Self::parse_mapping(
+            mapping,
+            &mut parsers,
+            &mut output_fields,
+            &default_parser,
+            &mut multi_input_group_count,
+        );
         Self {
             field_name,
             parsers,
@@ -180,6 +199,7 @@ impl FieldParserTree {
             default_parser,
             ignore_parsing,
             has_primary_keys,
+            multi_input_group_count,
         }
     }
 
@@ -196,6 +216,7 @@ impl FieldParserTree {
         parsers: &mut IndexMap<String, ParserType>,
         output_fields: &mut Vec<Field>,
         default_parser: &Option<Parser>,
+        multi_input_group_count: &mut usize,
     ) -> bool {
         let mut has_primary_keys = false;
 
@@ -242,7 +263,12 @@ impl FieldParserTree {
                         parsers.insert(name.input_name().to_string(), fp_type);
                     }
                 }
-                Field::Multi(_) => {
+                Field::Multi(multi_input) => {
+                    let mut multi_input = multi_input.clone();
+                    multi_input.group_index = *multi_input_group_count;
+                    *multi_input_group_count += 1;
+                    let field = Field::Multi(multi_input);
+
                     output_fields.push(field.clone());
                     for name in field.input_names() {
                         let parser_type = parsers.get_mut(&name);
@@ -272,6 +298,7 @@ impl FieldParserTree {
                         &mut inner_parser,
                         &mut inner_fields,
                         default_parser,
+                        multi_input_group_count,
                     );
                     //create output fields
                     output_fields.push(Field::Object {
@@ -299,13 +326,26 @@ impl FieldParserTree {
                                 default_parser,
                                 ignore_parsing: *ignore,
                                 has_primary_keys: false,
+                                multi_input_group_count: *multi_input_group_count,
                             },
                         },
                     );
                 }
 
                 Field::Array(array_field) => {
-                    let array_field = array_field.0.as_ref();
+                    let field = match array_field.0.as_ref() {
+                        Field::Multi(multi_input) => {
+                            let mut multi_input = multi_input.clone();
+                            multi_input.group_index = *multi_input_group_count;
+                            *multi_input_group_count += 1;
+                            Field::Array(ArrayField(Box::new(Field::Multi(multi_input))))
+                        }
+                        _ => field.clone(),
+                    };
+                    let Field::Array(grouped_array_field) = &field else {
+                        unreachable!();
+                    };
+                    let array_field = grouped_array_field.0.as_ref();
                     for name in array_field.input_names() {
                         match array_field {
                             Field::Single {
@@ -382,6 +422,7 @@ impl FieldParserTree {
                                     &mut inner_parser,
                                     &mut inner_fields,
                                     default_parser,
+                                    multi_input_group_count,
                                 );
 
                                 //create output fields
@@ -411,6 +452,7 @@ impl FieldParserTree {
                                         default_parser,
                                         ignore_parsing: *ignore,
                                         has_primary_keys: false,
+                                        multi_input_group_count: *multi_input_group_count,
                                     },
                                 });
 
@@ -593,23 +635,8 @@ impl FieldParserTree {
         value: Option<&str>,
         record: &mut Record,
     ) -> Result<(), Error> {
-        let parser = self.parsers.get(input_name);
-        match parser {
-            Some(parser_type) => {
-                if let ParserType::Field { parser } = parser_type {
-                    parser.parse(value, record)
-                } else {
-                    Err(Error::InvalidParserType(input_name.to_string()))
-                }
-            }
-            None => {
-                if let Some(default) = &self.default_parser {
-                    default.parse(input_name, value, record)
-                } else {
-                    Ok(())
-                }
-            }
-        }
+        let mut multi_input_context = MultiInputContext::default();
+        self.parse_with_context(input_name, value, record, &mut multi_input_context)
     }
 
     /// Sets a parsed value into the output record, handling different parser shapes.
@@ -669,6 +696,34 @@ impl FieldParserTree {
         match &self.field_name {
             Some(field) => field.output_name().to_string(),
             None => "".to_string(),
+        }
+    }
+}
+
+impl FieldParserTree {
+    pub(crate) fn parse_with_context(
+        &self,
+        input_name: &str,
+        value: Option<&str>,
+        record: &mut Record,
+        multi_input_context: &mut MultiInputContext,
+    ) -> Result<(), Error> {
+        let parser = self.parsers.get(input_name);
+        match parser {
+            Some(parser_type) => {
+                if let ParserType::Field { parser } = parser_type {
+                    parser.parse_with_context(value, record, multi_input_context)
+                } else {
+                    Err(Error::InvalidParserType(input_name.to_string()))
+                }
+            }
+            None => {
+                if let Some(default) = &self.default_parser {
+                    default.parse(input_name, value, record)
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 }
