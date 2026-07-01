@@ -127,15 +127,14 @@ class Field:
         ...
 
 class FieldName:
-    """Stores field metadata including names, qualifiers, and descriptions.
-    This is used to map input fields to output names with optional
-    qualifiers and documentation."""
+    """Stores field metadata including names and descriptions.
+    This is used to map input fields to output names with optional documentation."""
 
     def __init__(
         self,
         input_name: str,
+        primary_key: bool = False,
         output_name: Optional[str] = None,
-        qualifier: Optional[str] = None,
         display_name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> None:
@@ -143,8 +142,9 @@ class FieldName:
 
         Args:
             input_name: The name of the field in the input data.
+            primary_key: Whether the field participates in the generated record identifier.
             output_name: The name of the field in the output data. If not provided, defaults to input_name.
-            qualifier: An optional qualifier
+            display_name: An optional human-readable short label for the field.
             description: An optional human-readable description of the field.
         """
         ...
@@ -157,12 +157,8 @@ class FieldName:
         """The output field name as a string. If no output name was specified, returns the input name."""
         ...
 
-    def name(self, with_qualifier: bool) -> str:
-        """Return the field name, optionally including the qualifier.
-
-        Args:
-            with_qualifier: If True, include the qualifier in the returned name. If False, return only the base name.
-        """
+    def name(self) -> str:
+        """Return the output field name."""
         ...
 
     def display(self) -> str:
@@ -364,7 +360,6 @@ class FileReport:
     format: str
     date_format: str
     with_timeline: bool
-    with_qualifiers: bool
     include_empty: bool
     file_name: str
     num_lines: int
@@ -404,7 +399,7 @@ class MultiInputField:
         """
         Args:
             input_fields: A list of Field instances that define the input fields to be processed.
-            output_field: A FieldName object specifying the output name, optional qualifier, and description.
+            output_field: A FieldName object specifying the output name and description.
             parser: A MultiParser instance that defines how the input fields are combined into a single output.
         """
         ...
@@ -565,7 +560,6 @@ class OutputConfiguration:
     format: str
     date_format: str
     with_timeline: bool
-    with_qualifiers: bool
     include_empty: bool
     output_folder: str
     base_file_name: str
@@ -579,7 +573,6 @@ class OutputConfiguration:
         format: str = "jsonl",
         date_format: str = "iso_utc",
         with_timeline: bool = False,
-        with_qualifiers: bool = False,
         include_empty: bool = True,
         params: Dict[str, str] = {},
     ) -> None:
@@ -591,7 +584,6 @@ class OutputConfiguration:
             format: Primary serialization format, e.g. ``"json"`` or ``"csv"``. Defaults to ``"jsonl"``.
             date_format: Pattern used for serialising timestamps, e.g. ``"iso_utc"``. Defaults to ``"iso_utc"``.
             with_timeline: Include timeline information when ``True``. Defaults to ``False``.
-            with_qualifiers: Attach qualifier data to field names when ``True``. Defaults to ``False``.
             include_empty: Emit empty fields when ``True``. Defaults to ``True``.
             params: Free-form key/value pairs for extra options. Defaults to ``{}``.
         """
@@ -1374,137 +1366,3 @@ def win_ntfs_flag_parser() -> ParserExtension:
 def win_signed_hash_parser() -> ParserExtension:
     """Put SignedHash value into the right hash field"""
     ...
-
-class Qualifiers:
-    """
-    Qualifiers are optional labels or tags that can be appended to field names to provide additional context
-
-    Example:
-        A field named 'timestamp' with qualifier 'DATE_CREATION' would be rendered as 'timestamp:creation_date'
-        in the output when qualifiers are included.
-    """
-
-    # Timestamp
-    DATE_CREATION: str
-    DATE_MODIFICATION: str
-    DATE_CHANGE: str
-    DATE_ACCESS: str
-    DATE_COMPILATION: str
-    DATE_INSTALLATION: str
-    DATE_UNINSTALL: str
-    DATE_LAST_RUN: str
-    TIMEZONE: str
-
-    # Computer
-    COMPUTER_NAME: str
-
-    # OS
-    OS_VERSION: str
-    OS_ARCH: str
-
-    # User
-    USER_NAME: str
-    USER_SID: str
-    USER_ID: str
-    LOGON_ID: str
-
-    # Group
-    GROUP_ID: str
-    GROUP_NAME: str
-
-    # Filesystem
-    FS_INODE: str
-    FS_USN: str
-    VOLUME_GUID: str
-    MFT_SEQUENCE: str
-
-    # Disk
-    DISK_SIZE: str
-
-    # File
-    FILE_NAME: str
-    FILE_SIZE: str
-    FILE_PATH: str
-    FILE_PATH_SHA1: str
-    FILE_MD5: str
-    FILE_SHA1: str
-    FILE_SHA256: str
-    FILE_SHA384: str
-    FILE_SHA512: str
-    FILE_TIGER: str
-    FILE_WHIRLPOOL: str
-    FILE_SSDEEP: str
-    FILE_TLSH: str
-    FILE_ATTRS: str
-
-    # PE
-    PE_MD5: str
-    PE_SHA1: str
-    PE_SHA256: str
-    PE_ARCH: str
-    PE_SUBSYSTEM: str
-    PE_VERSION: str
-    EXIT_CODE: str
-
-    # File execution
-    COMMAND_LINE: str
-
-    # Application
-    APP_ID: str
-    APP_NAME: str
-    APP_CLSID: str
-    MSI_PRODUCT: str
-    MSI_PACKAGE: str
-
-    # Publisher
-    COMPANY: str
-    PUBLISHER: str
-    PRODUCT: str
-
-    # Certificate
-    CERT_SHA1: str
-
-    # Registry
-    HIVE_MOUNT: str
-    KEY_NAME: str
-    KEY_PATH: str
-    VALUE_NAME: str
-    VALUE_DATA: str
-
-    # Service
-    SERVICE_NAME: str
-    SERVICE_TYPE: str
-    SERVICE_DISPLAY_NAME: str
-    SERVICE_START_TYPE: str
-
-    # Process
-    PROCESS_ID: str
-
-    # ScheduledTask
-    SCHTASK_GUID: str
-    SCHTASK_URI: str
-
-    # Event
-    EVT_PROVIDER: str
-    EVT_ID: str
-    EVT_CHANNEL: str
-    EVT_RECORD_ID: str
-
-    # State
-    IN_USE: str
-    REUSE_COUNT: str
-
-    # DNS
-    DOMAIN_NAME: str
-
-    # Windows
-    WINDOWS_PRIVILEGES: str
-    SECURITY_DESCRIPTOR: str
-    WINDOWS_OBJECT: str
-
-    # Network
-    IP_ADDRESS: str
-    IP_PORT: str
-    MAC_ADDRESS: str
-
-    def __init__(self): ...

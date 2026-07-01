@@ -296,48 +296,6 @@ const HIVE_VALUE_SIZE: &str = "size";
 const HIVE_VALUE_ERROR: &str = "error";
 const HIVE_VALUE_INVALID_SIGNATURE: &str = "invalid_signature";
 
-// fn values_field_mapping() -> Vec<Field> {
-//     let qualifiers = Qualifiers::new();
-
-//     vec![
-//         Field::Single {
-//             name: FieldName::new(
-//                 HIVE_VALUE_NAME.to_owned(),
-//                 None,
-//                 Some(qualifiers.VALUE_NAME.clone()),
-//                 None,
-//             ),
-//             parser: Parser::String(),
-//             default_value: None,
-//         },
-//         Field::Single {
-//             name: FieldName::new(
-//                 HIVE_VALUE_PATH.to_owned(),
-//                 None,
-//                 Some(qualifiers.KEY_PATH.clone()),
-//                 None,
-//             ),
-//             parser: Parser::String(),
-//             default_value: None,
-//         },
-//         Field::Single {
-//             name: FieldName::new(HIVE_VALUE_TYPE.to_owned(), None, None, None),
-//             parser: Parser::String(),
-//             default_value: None,
-//         },
-//         Field::Single {
-//             name: FieldName::new(HIVE_VALUE_SIZE.to_owned(), None, None, None),
-//             parser: Parser::Int(),
-//             default_value: None,
-//         },
-//         Field::Single {
-//             name: FieldName::new(HIVE_VALUE_DATA.to_owned(), None, None, None),
-//             parser: Parser::String(),
-//             default_value: None,
-//         },
-//     ]
-// }
-
 /// Extract Keys from a Windows Hive file
 ///
 ///  - Applies optional `filter` to restrict processing to a specific subpath.

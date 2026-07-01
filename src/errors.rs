@@ -74,9 +74,6 @@ pub enum Error {
     #[error("While Reading File: '{0}' Error: {1}")]
     FileRead(String, String),
 
-    #[error("Unknown Qualifier: '{0}'")]
-    UnknownQualifier(String),
-
     #[error("Field '{0}' does not have an associated python parser")]
     UnknownPythonParser(String),
 

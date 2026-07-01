@@ -18,7 +18,6 @@ use crate::{
         },
         xml::parse_xml,
     },
-    qualifiers::Qualifiers,
     registry_api::{RegKey, RegValue, Registry},
     seven_zip_unpack::{FilesToExtract, extract_7z_file, extract_7z_files},
     timeline::{TimeLineBuilder, TimeLineType, TimelineDisplayOptions},
@@ -115,7 +114,6 @@ pub fn dfir_ogre_common(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DataTypeMapping>()?;
     m.add_class::<PluginDescription>()?;
     m.add_class::<PyParser>()?;
-    m.add_class::<Qualifiers>()?;
     m.add_class::<SecurityDescriptor>()?;
     m.add_class::<SecurityDescriptorAce>()?;
     m.add_class::<RunConfiguration>()?;
