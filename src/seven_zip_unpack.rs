@@ -270,9 +270,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(fs::exists(&out_dir.join("GetThis.csv")).unwrap());
-        assert!(fs::exists(&out_dir.join("evtx/WinRM%4Operationa.data")).unwrap());
-        assert!(fs::exists(&out_dir.join("evtx/EBE79D4BE79B4B5_1000000001173_2000000000032_4_Microsoft-Windows-Kernel-EventTracing%4Admin.evtx_{00000000-0000-0000-0000-000000000000}.data")).unwrap());
+        assert!(fs::exists(out_dir.join("GetThis.csv")).unwrap());
+        assert!(fs::exists(out_dir.join("evtx/WinRM%4Operationa.data")).unwrap());
+        assert!(fs::exists(out_dir.join("evtx/EBE79D4BE79B4B5_1000000001173_2000000000032_4_Microsoft-Windows-Kernel-EventTracing%4Admin.evtx_{00000000-0000-0000-0000-000000000000}.data")).unwrap());
     }
 
     #[test]

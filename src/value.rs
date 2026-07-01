@@ -253,6 +253,7 @@ impl Value {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn hash(&self, hasher: &mut Hasher) {
         match self {
             Value::Null() => {
@@ -348,7 +349,7 @@ mod tests {
             ("\x01", "\\u0001"),
         ];
         for (input, expected) in cases {
-            assert_eq!(escape_special_chars(&input.to_string()), expected);
+            assert_eq!(escape_special_chars(input), expected);
         }
     }
 
@@ -398,8 +399,8 @@ mod tests {
         let i2 = Value::Int(12345);
         assert_eq!(hash_of(&i1), hash_of(&i2));
 
-        let f1 = Value::Float(3.14);
-        let f2 = Value::Float(3.14);
+        let f1 = Value::Float(3.5);
+        let f2 = Value::Float(3.5);
         assert_eq!(hash_of(&f1), hash_of(&f2));
 
         let b1 = Value::Bool(true);

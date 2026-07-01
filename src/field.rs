@@ -1110,7 +1110,7 @@ mod tests {
         parser.parse("value", Some("no"), &mut output).unwrap();
 
         if let &Value::Bool(value) = output.get("value").unwrap() {
-            assert_eq!(value, false);
+            assert!(!value);
         } else {
             panic!("should be a boolean");
         }
@@ -1131,7 +1131,7 @@ mod tests {
         let parser = Parser::Ignore();
         parser.parse("value", Some("3.5"), &mut output).unwrap();
 
-        if let Some(_) = output.get("value") {
+        if output.get("value").is_some() {
             panic!("should be ignored");
         }
 
@@ -1245,9 +1245,9 @@ mod tests {
             panic!("should be an Integer");
         }
 
-        parser.parse("value", Some("3.14"), &mut output).unwrap();
+        parser.parse("value", Some("3.5"), &mut output).unwrap();
         if let &Value::Float(value) = output.get("value").unwrap() {
-            assert_eq!(value, 3.14);
+            assert_eq!(value, 3.5);
         } else {
             panic!("should be a float");
         }
@@ -1281,7 +1281,7 @@ mod tests {
             MultiParser::Join("()".to_owned(), true),
         ));
         let mut record = Record::new();
-        if let Ok(_) = field.set_value(Value::Int(0), &mut record) {
+        if field.set_value(Value::Int(0), &mut record).is_ok() {
             panic!("set value is not supported for multi imput field")
         }
     }
@@ -1295,7 +1295,7 @@ mod tests {
         };
 
         let mut record = Record::new();
-        if let Ok(_) = field.set_value(Value::Int(0), &mut record) {
+        if field.set_value(Value::Int(0), &mut record).is_ok() {
             panic!("set value requires an Object Value for Object field")
         }
 

@@ -828,17 +828,13 @@ mod tests {
 
         field_parser.get_parser("timestamp").unwrap();
 
-        if let Some(_) = field_parser.get_parser("unknow_field") {
-            panic!("shoudl not return a parser")
-        }
+        assert!(field_parser.get_parser("unknow_field").is_none());
 
         let mapping = FieldMapping::new(field_mapping(), Some(Parser::String()));
         let mut field_parser = mapping.get_field_parser_tree();
         field_parser.get_parser("unknow_field").unwrap();
 
-        if let Some(_) = field_parser.get_parser("System") {
-            panic!("System is an object an cannot return a parser")
-        }
+        assert!(field_parser.get_parser("System").is_none());
     }
 
     #[test]
@@ -851,17 +847,21 @@ mod tests {
             .get_parser_by_path(vec!["timestamp".to_owned()])
             .unwrap();
 
-        if let Some(_) = field_parser.get_parser_by_path(vec!["unknow_field".to_owned()]) {
-            panic!("shoudl not return a parser")
-        }
+        assert!(
+            field_parser
+                .get_parser_by_path(vec!["unknow_field".to_owned()])
+                .is_none()
+        );
 
-        if let Some(_) = field_parser.get_parser_by_path(vec![
-            "System".to_owned(),
-            "TimeCreated_attributes".to_owned(),
-            "unknow_field".to_owned(),
-        ]) {
-            panic!("shoudl not return a parser")
-        }
+        assert!(
+            field_parser
+                .get_parser_by_path(vec![
+                    "System".to_owned(),
+                    "TimeCreated_attributes".to_owned(),
+                    "unknow_field".to_owned(),
+                ])
+                .is_none()
+        );
 
         let mapping = FieldMapping::new(field_mapping(), Some(Parser::String()));
         let mut field_parser = mapping.get_field_parser_tree();
@@ -870,20 +870,24 @@ mod tests {
             .get_parser_by_path(vec!["unknow_field".to_owned()])
             .unwrap();
 
-        if let Some(_) = field_parser.get_parser_by_path(vec!["System".to_owned()]) {
-            panic!("System is an object an cannot return parser")
-        }
+        assert!(
+            field_parser
+                .get_parser_by_path(vec!["System".to_owned()])
+                .is_none()
+        );
 
         field_parser
             .get_parser_by_path(vec!["System".to_owned(), "EventRecordID".to_owned()])
             .unwrap();
 
-        if let Some(_) = field_parser.get_parser_by_path(vec![
-            "System".to_owned(),
-            "TimeCreated_attributes".to_owned(),
-        ]) {
-            panic!("System->TimeCreated_attributes is an object an cannot return a parser")
-        }
+        assert!(
+            field_parser
+                .get_parser_by_path(vec![
+                    "System".to_owned(),
+                    "TimeCreated_attributes".to_owned()
+                ])
+                .is_none()
+        );
 
         field_parser
             .get_parser_by_path(vec![

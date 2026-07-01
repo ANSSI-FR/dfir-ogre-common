@@ -919,15 +919,14 @@ mod tests {
         assert_eq!(int_array[1].as_i64().unwrap(), 8);
 
         let unmaped = line.get("unmapped").unwrap().as_array().unwrap();
-        assert_eq!(
+        assert!(
             unmaped[1]
                 .as_object()
                 .unwrap()
                 .get("device_updated")
                 .unwrap()
                 .as_bool()
-                .unwrap(),
-            true
+                .unwrap()
         );
     }
 

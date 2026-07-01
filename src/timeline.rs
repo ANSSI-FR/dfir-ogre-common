@@ -1000,7 +1000,7 @@ mod tests {
             .0
             .lock()
             .expect("mutex lock panicked");
-        for (_, meaning) in &timeline_data.timestamps {
+        for meaning in timeline_data.timestamps.values() {
             assert_eq!("Meaning 1 - Meaning 2", meaning.format_meaning())
         }
     }
@@ -1075,7 +1075,7 @@ mod tests {
             .0
             .lock()
             .expect("mutex lock panicked");
-        for (_, meaning) in &timeline_data.timestamps {
+        for meaning in timeline_data.timestamps.values() {
             assert_eq!("$SI:M..B - $FN:.AC.", meaning.format_meaning())
         }
     }
@@ -1241,8 +1241,8 @@ mod tests {
         let date =
             crate::date_util::parse_date("1990-01-10T14:19:21.123-08:00", &DateInputCodec::Iso())
                 .unwrap();
-        data.add("si_creation_date", Value::Date(date.clone()));
-        data.add("fn_creation_date", Value::Date(date.clone()));
+        data.add("si_creation_date", Value::Date(date));
+        data.add("fn_creation_date", Value::Date(date));
 
         let date =
             crate::date_util::parse_date("1996-12-19T16:39:57.123-08:00", &DateInputCodec::Iso())
@@ -1260,7 +1260,7 @@ mod tests {
         );
 
         level_2_data.add("l2_not_mapped", Value::Bool(true));
-        level_2_data.add("si_lastmod_date", Value::Date(date.clone()));
+        level_2_data.add("si_lastmod_date", Value::Date(date));
         level_2_data.add(
             level2_field.output_name(),
             Value::String("level 2 descrp".to_owned()),
@@ -1271,7 +1271,7 @@ mod tests {
         level_1_data.add(level_2.output_name(), Value::Object(level_2_data));
 
         level_1_data.add("l1_not_mapped", Value::Bool(true));
-        level_1_data.add("fn_lastchange_date", Value::Date(date.clone()));
+        level_1_data.add("fn_lastchange_date", Value::Date(date));
         level_1_data.add("lvl1_descr", Value::String("level 1 descrp".to_owned()));
 
         data.add(level_1.output_name(), Value::Object(level_1_data));
@@ -1299,15 +1299,17 @@ mod tests {
     /// Test the basic `TimeLine` struct serialization and ID computation.
     #[test]
     fn timeline_struct_serialisation() {
-        let mut tl = TimeLine::default();
-        tl.computer = Some("COMP1".to_owned());
-        tl.timestamp =
-            crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso()).unwrap();
-        tl.timestamp_meaning = "Created".to_owned();
-        tl.data_type = "evtx".to_owned();
-        tl.related_user = "user".to_owned();
-        tl.description = "desc".to_owned();
-        tl.additional_description = "add".to_owned();
+        let mut tl = TimeLine {
+            computer: Some("COMP1".to_owned()),
+            timestamp: crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso())
+                .unwrap(),
+            timestamp_meaning: "Created".to_owned(),
+            data_type: "evtx".to_owned(),
+            related_user: "user".to_owned(),
+            description: "desc".to_owned(),
+            additional_description: "add".to_owned(),
+            ..TimeLine::default()
+        };
 
         // Compute deterministic ID.
         let mut hasher = blake3::Hasher::new();
@@ -1335,7 +1337,7 @@ mod tests {
         // CSV serialisation (normalized).
         let mut csv = String::new();
         TimeLine::csv_serialise_header(&mut csv, normalized);
-        csv.push_str("\n");
+        csv.push('\n');
         tl.csv_serialise(&mut csv, &DateOutputCodec::IsoUtc(), true, normalized)
             .unwrap();
 
@@ -1364,7 +1366,7 @@ mod tests {
         let normalized = false;
         let mut csv = String::new();
         TimeLine::csv_serialise_header(&mut csv, normalized);
-        csv.push_str("\n");
+        csv.push('\n');
         tl.csv_serialise(&mut csv, &DateOutputCodec::IsoUtc(), true, normalized)
             .unwrap();
 

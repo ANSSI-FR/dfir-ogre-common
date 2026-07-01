@@ -235,7 +235,7 @@ fn parse_mapping(
                         .cloned()
                         .unwrap_or("iso".to_string());
 
-                    let codec = DateInputCodec::from_str(&value);
+                    let codec = DateInputCodec::from(value.as_str());
                     config.default_date_pattern = codec;
                 }
                 _ => {
@@ -759,7 +759,7 @@ fn get_parser(
 
         "DateTime" => {
             let codec = match elem.attributes.get("date_codec") {
-                Some(date_codec) => DateInputCodec::from_str(date_codec),
+                Some(date_codec) => DateInputCodec::from(date_codec.as_str()),
                 None => default_date_pattern.clone(),
             };
             Parser::DateTime(codec)

@@ -245,9 +245,9 @@ mod tests {
         meta2.archive_filename = meta1.archive_filename.clone();
         meta2.original_filename = meta1.original_filename.clone();
         meta2.vss = meta1.vss.clone();
-        meta2.orc_start_date = meta1.orc_start_date.clone();
-        meta2.creation_date = meta1.creation_date.clone();
-        meta2.modif_date = meta1.modif_date.clone();
+        meta2.orc_start_date = meta1.orc_start_date;
+        meta2.creation_date = meta1.creation_date;
+        meta2.modif_date = meta1.modif_date;
 
         // Compute hashes
         let mut hasher1 = blake3::Hasher::new();
@@ -316,12 +316,12 @@ mod tests {
         let mut hasher1 = blake3::Hasher::new();
         meta.compute_id(&mut hasher1);
         let hash1 = hasher1.finalize();
-        meta.id = Some(BASE64.encode(&hash1.as_slice()));
+        meta.id = Some(BASE64.encode(hash1.as_slice()));
 
         let mut csv = String::new();
 
         Metadata::csv_serialise_header(&mut csv);
-        csv.push_str("\n");
+        csv.push('\n');
         meta.csv_serialise(&mut csv, &DateOutputCodec::IsoUtc());
 
         let mut reader = csv::ReaderBuilder::new()

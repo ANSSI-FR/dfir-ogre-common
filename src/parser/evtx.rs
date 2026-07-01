@@ -337,7 +337,7 @@ mod tests {
             // let mut record = record.unwrap();
             line_number += 1;
             let erroneous_line = 1111;
-            if let Err(_) = record {
+            if record.is_err() {
                 assert_eq!(line_number, erroneous_line)
             } else if line_number == erroneous_line {
                 panic!("Line {erroneous_line} should be in error")

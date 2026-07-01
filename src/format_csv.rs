@@ -569,7 +569,7 @@ mod tests {
         assert_eq!(ouput.file_report.num_lines, 1);
         ouput.close().unwrap();
 
-        let path = Path::new(TMP_FOLDER).join(format!("ogre_metadata.csv"));
+        let path = Path::new(TMP_FOLDER).join("ogre_metadata.csv");
         fs::remove_file(path).unwrap();
 
         let path = Path::new(TMP_FOLDER).join(format!("{base_file_name}.csv"));

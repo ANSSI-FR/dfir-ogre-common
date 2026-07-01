@@ -28,7 +28,19 @@ pub enum DateInputCodec {
     ///A codec that parses date strings using the given format pattern (e.g., '%Y-%m-%d %H:%M:%S')."""
     Pattern(String),
 }
+
 impl DateInputCodec {
+    /// Creates a `DateInputCodec` instance from a string name.
+    ///
+    /// This inherent constructor is kept for existing Rust callers. New code can
+    /// use `DateInputCodec::from(name)` or `name.parse::<DateInputCodec>()`.
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(name: &str) -> Self {
+        Self::from(name)
+    }
+}
+
+impl From<&str> for DateInputCodec {
     /// Creates a `DateInputCodec` instance from a string name.
     ///
     /// # Arguments
@@ -42,7 +54,7 @@ impl DateInputCodec {
     ///
     /// A `DateInputCodec` variant corresponding to the provided name.
     ///
-    pub fn from_str(name: &str) -> Self {
+    fn from(name: &str) -> Self {
         match name {
             "iso" => DateInputCodec::Iso(),
             "file_time" => DateInputCodec::FileTime(),
@@ -52,6 +64,14 @@ impl DateInputCodec {
             "timestamp_ns" => DateInputCodec::TimestampNs(),
             _ => DateInputCodec::Pattern(name.to_owned()),
         }
+    }
+}
+
+impl std::str::FromStr for DateInputCodec {
+    type Err = std::convert::Infallible;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from(name))
     }
 }
 
@@ -196,7 +216,7 @@ mod tests {
     ///    - Custom pattern string
     #[test]
     fn date_iso() {
-        let codec = DateInputCodec::from_str("iso");
+        let codec = DateInputCodec::from("iso");
 
         let input = "1996-12-19T16:39:57.123-08:00";
         let date = parse_date(input, &codec).unwrap();
@@ -227,7 +247,7 @@ mod tests {
     ///    - ISO UTC format
     #[test]
     fn date_naive() {
-        let codec = DateInputCodec::from_str("%Y-%m-%d %H:%M:%S.%3f");
+        let codec = DateInputCodec::from("%Y-%m-%d %H:%M:%S.%3f");
 
         let input = "2016-01-22 03:08:51.337";
         let date = parse_date(input, &codec).unwrap();
@@ -249,7 +269,7 @@ mod tests {
     ///    - ISO UTC format
     #[test]
     fn date_custom() {
-        let codec = DateInputCodec::from_str("%Y-%m-%d %H:%M:%S.%3f %z");
+        let codec = DateInputCodec::from("%Y-%m-%d %H:%M:%S.%3f %z");
 
         let input = "1996-12-19 16:39:57.123 -08:00";
         let date = parse_date(input, &codec).unwrap();
@@ -271,13 +291,13 @@ mod tests {
     ///    - Custom pattern string
     #[test]
     fn timestamp() {
-        let codec = DateInputCodec::from_str("iso");
+        let codec = DateInputCodec::from("iso");
 
         let input = "1996-12-19T16:39:57.123-08:00";
         let date = parse_date(input, &codec).unwrap();
 
         let ts = date.timestamp();
-        let codec = DateInputCodec::from_str("timestamp");
+        let codec = DateInputCodec::from("timestamp");
 
         let date = parse_date(&ts.to_string(), &codec).unwrap();
 
@@ -306,13 +326,13 @@ mod tests {
     ///    - Custom pattern string
     #[test]
     fn timestamp_ms() {
-        let codec = DateInputCodec::from_str("iso");
+        let codec = DateInputCodec::from("iso");
 
         let input = "1996-12-19T16:39:57.123-08:00";
         let date = parse_date(input, &codec).unwrap();
 
         let ts = date.timestamp_millis();
-        let codec = DateInputCodec::from_str("timestamp_ms");
+        let codec = DateInputCodec::from("timestamp_ms");
 
         let date = parse_date(&ts.to_string(), &codec).unwrap();
 
@@ -341,13 +361,13 @@ mod tests {
     ///    - Custom pattern string
     #[test]
     fn timestamp_ns() {
-        let codec = DateInputCodec::from_str("iso");
+        let codec = DateInputCodec::from("iso");
 
         let input = "1996-12-19T16:39:57.123456-08:00";
         let date = parse_date(input, &codec).unwrap();
 
         let ts = date.timestamp_nanos_opt().unwrap();
-        let codec = DateInputCodec::from_str("timestamp_ns");
+        let codec = DateInputCodec::from("timestamp_ns");
 
         let date = parse_date(&ts.to_string(), &codec).unwrap();
 
@@ -376,7 +396,7 @@ mod tests {
     ///    - Custom pattern string
     #[test]
     fn file_time() {
-        let codec = DateInputCodec::from_str("file_time");
+        let codec = DateInputCodec::from("file_time");
 
         let input = "133210364868558102";
         let date = parse_date(input, &codec).unwrap();
@@ -395,7 +415,7 @@ mod tests {
 
     #[test]
     fn timestamp_hex_accepts_prefixed_and_plain_values() {
-        let codec = DateInputCodec::from_str("timestamp_hex");
+        let codec = DateInputCodec::from("timestamp_hex");
 
         let prefixed = parse_date("0x5010ad0a", &codec).unwrap();
         let plain = parse_date("5010ad0a", &codec).unwrap();

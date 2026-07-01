@@ -53,6 +53,7 @@ impl Record {
     /// # Arguments
     /// * `hasher` – A mutable reference to a `blake3::Hasher` that will be updated
     ///   with the record's contents.
+    #[allow(clippy::should_implement_trait)]
     pub fn hash(&self, hasher: &mut Hasher) {
         for (key, value) in self.iter() {
             hasher.update(key.as_bytes());
@@ -112,6 +113,7 @@ impl Record {
     }
 
     /// Serializes the record to a JSON string using `Value::json_serialise_record`.
+    #[allow(clippy::inherent_to_string_shadow_display)]
     pub fn to_string(&self) -> String {
         let mut buffer = String::new();
         if let Err(e) =
@@ -161,13 +163,13 @@ mod tests {
         tup.add("null_val", Value::Null());
         tup.add("string", Value::String("Hello \"World\"\n".into()));
         tup.add("int", Value::Int(-42));
-        tup.add("float", Value::Float(3.14));
+        tup.add("float", Value::Float(3.5));
         tup.add("bool", Value::Bool(false));
 
         let json = tup.to_string();
         // Expected JSON respects escaping and inclusion of null (since `include_empty` is true)
         let expected =
-            r#"{"null_val":null,"string":"Hello \"World\"\n","int":-42,"float":3.14,"bool":false}"#;
+            r#"{"null_val":null,"string":"Hello \"World\"\n","int":-42,"float":3.5,"bool":false}"#;
         assert_eq!(json, expected);
     }
 

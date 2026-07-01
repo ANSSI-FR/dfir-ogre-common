@@ -156,10 +156,8 @@ impl FieldTraversalHandler for LineBuildTraversal<'_> {
         force_snake_case: bool,
     ) -> Result<(), Error> {
         LineBuilder::process_object_field_mapping(
+            self,
             input_data,
-            self.line_data,
-            self.timeline_builder,
-            self.timeline_fields,
             field_name,
             fields,
             ignore,
@@ -412,18 +410,16 @@ impl LineBuilder {
     ///
     /// # Arguments
     ///
+    /// * `traversal` - Shared line data and optional timeline context for this traversal.
     /// * `input_data` - The mutable input record to read values from.
-    /// * `line_data` - The output structure where transformed data is accumulated.
-    /// * `timeline_builder` - Optional timeline builder for date enrichment.
-    /// * `timeline_fields` - Mapping of field names to timeline configurations.
-    /// * `field_parsers` - Parser tree defining how nested fields should be mapped.
+    /// * `field_name` - Object field metadata.
+    /// * `field_mapping` - Parser tree defining how nested fields should be mapped.
+    /// * `ignore_parsing` - Whether this object field should be skipped.
     /// * `force_snake_case` - Whether to convert unmapped keys to snake_case.
     ///
     fn process_object_field_mapping(
+        traversal: &mut LineBuildTraversal<'_>,
         input_data: &mut Record,
-        line_data: &mut LineData,
-        timeline_builder: Option<&TimeLineBuilder>,
-        timeline_fields: Option<&HashMap<String, TimelineField>>,
         field_name: &FieldName,
         field_mapping: &[Field],
         ignore_parsing: bool,
@@ -436,10 +432,12 @@ impl LineBuilder {
         }
 
         if let Some(value) = value_opt {
-            let inner_tl_fields = timeline_fields.and_then(|tl| tl.get(field_name.output_name()));
+            let inner_tl_fields = traversal
+                .timeline_fields
+                .and_then(|tl| tl.get(field_name.output_name()));
 
             let inner_tl_fields = if let Some(tlfields) = inner_tl_fields {
-                if let Some(timeline_builder) = timeline_builder
+                if let Some(timeline_builder) = traversal.timeline_builder
                     && !tlfields.fields.is_empty()
                 {
                     timeline_builder.add_field_value(&tlfields.fields, field_name.name(), &value);
@@ -455,14 +453,16 @@ impl LineBuilder {
                 Self::build_record(
                     &mut inner_data,
                     &mut inner_insert,
-                    timeline_builder,
+                    traversal.timeline_builder,
                     inner_tl_fields,
                     field_mapping,
                     force_snake_case,
                     false,
                 )?;
 
-                line_data.add_data(field_name, Value::Object(inner_insert.data));
+                traversal
+                    .line_data
+                    .add_data(field_name, Value::Object(inner_insert.data));
             }
         }
 
@@ -752,9 +752,6 @@ fn to_snake_case(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-
-    use std::usize;
-
     use crate::{
         DateInputCodec, FieldName, Parser,
         field::{ArrayField, Field},
@@ -1142,7 +1139,7 @@ mod tests {
         );
         line_builder.build(&mut root).unwrap();
         let records = line_builder.line_data.data;
-        assert_eq!(true, records.get("array").is_none());
+        assert!(records.get("array").is_none());
     }
 
     #[test]
@@ -1203,7 +1200,7 @@ mod tests {
                 let val = &records[0];
                 match val {
                     Value::Int(value) => {
-                        assert_eq!(true, *value == 0 || *value == 1)
+                        assert!(*value == 0 || *value == 1)
                     }
                     _ => panic!("should be an Int"),
                 }
@@ -1270,7 +1267,7 @@ mod tests {
 
     #[test]
     fn timeline_array() {
-        let codec = DateInputCodec::from_str("iso");
+        let codec = DateInputCodec::from("iso");
 
         let mut nested_tup1 = Record::new();
         nested_tup1.add("comment", Value::String("first_comment".to_string()));
