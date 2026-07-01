@@ -6,8 +6,8 @@ use crate::{
     configuration::{DataTypeMapping, PluginConfiguration},
     date_util::{DateInputCodec, DateOutputCodec},
     field::{ArrayField, Field, FieldName, MultiParser, Parser, ParserExtension, PyParser},
-    field_mapping::{FieldMapping, FieldParser, FieldParserTree, ParserType},
-    output::{COMPRESSION_LEVEL, Output},
+    field_mapping::{FieldMapping, FieldParser, FieldParserTree},
+    output::{COMPRESSION_LEVEL, Output, OutputReport},
     parse_csv, parse_hive_keys, parse_regexp, parse_sqlite, parse_srum,
     parser::{
         evtx::parse_evtx,
@@ -95,7 +95,6 @@ pub fn dfir_ogre_common(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FieldMapping>()?;
     m.add_class::<FieldParser>()?;
     m.add_class::<FieldParserTree>()?;
-    m.add_class::<ParserType>()?;
     m.add_class::<RegKey>()?;
     m.add_class::<RegValue>()?;
     m.add_class::<Registry>()?;
@@ -107,6 +106,7 @@ pub fn dfir_ogre_common(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Output>()?;
     m.add_class::<OutputConfiguration>()?;
     m.add_class::<FileReport>()?;
+    m.add_class::<OutputReport>()?;
     m.add_class::<FilesToExtract>()?;
     m.add_class::<Parser>()?;
     m.add_class::<ParserExtension>()?;

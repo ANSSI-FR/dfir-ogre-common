@@ -42,6 +42,11 @@ class DateInputCodec:
         ...
 
     @classmethod
+    def TimestampHex(cls):
+        """A codec that parses Unix timestamps in hexadecimal seconds (e.g., '0x5010ad0a')."""
+        ...
+
+    @classmethod
     def TimestampMs(cls):
         """A codec that parses date strings as Unix timestamps in milliseconds (e.g., 1704067199000)."""
         ...
@@ -676,6 +681,26 @@ def parse_hive_keys(
     """
     ...
 
+def parse_hive_values(
+    input_file: str,
+    run_config: RunConfiguration,
+    plugin_config: PluginConfiguration,
+    metadata: Metadata,
+    root_name: Optional[str] = None,
+    regexp: Optional[str] = None,
+) -> RunReport:
+    """Extract values from a Windows Hive file.
+
+    Args:
+        input_file: Path to the Hive file to be parsed.
+        run_config: RunConfiguration specifying parsing settings.
+        plugin_config: Plugin mapping configuration.
+        metadata: Metadata associated with the parsing task.
+        root_name: Optional string to prepend to paths in the output.
+        regexp: Optional regexp to filter path.
+    """
+    ...
+
 def parse_json(
     input_file: str,
     run_config: RunConfiguration,
@@ -732,7 +757,7 @@ def parse_regexp(
 
 def parse_sqlite(
     input_file: str,
-    run_donfig: RunConfiguration,
+    run_config: RunConfiguration,
     plugin_config: PluginConfiguration,
     metadata: Metadata,
     log_before_fail: int,
