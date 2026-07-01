@@ -52,8 +52,6 @@ pub struct OutputConfiguration {
     #[pyo3(get)]
     pub with_timeline: bool,
     #[pyo3(get)]
-    pub with_qualifiers: bool,
-    #[pyo3(get)]
     pub include_empty: bool,
     #[pyo3(get, set)]
     pub output_folder: String,
@@ -70,14 +68,13 @@ impl OutputConfiguration {
     /// * `format` – primary format (e.g., “json”, “csv”).
     /// * `date_format` – pattern used for serialising timestamps.
     /// * `with_timeline` – include timeline information when true.
-    /// * `with_qualifiers` – attach qualifier data when true.
     /// * `include_empty` – emit empty fields when true.
     /// * `output_folder` – directory where files are written.
     /// * `base_file_name` – base name for created files.
     /// * `params` – free‑form key/value pairs for extra options.
     #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = ( base_file_name, output_folder, output_type="file".into(), format="jsonl".into(), date_format="iso_utc".into(), with_timeline=false,with_qualifiers=false,include_empty=true, params=HashMap::new()))]
+    #[pyo3(signature = ( base_file_name, output_folder, output_type="file".into(), format="jsonl".into(), date_format="iso_utc".into(), with_timeline=false,include_empty=true, params=HashMap::new()))]
     pub fn new(
         base_file_name: String,
         output_folder: String,
@@ -85,7 +82,6 @@ impl OutputConfiguration {
         format: String,
         date_format: String,
         with_timeline: bool,
-        with_qualifiers: bool,
         include_empty: bool,
         params: HashMap<String, String>,
     ) -> Self {
@@ -94,7 +90,6 @@ impl OutputConfiguration {
             format,
             date_format,
             with_timeline,
-            with_qualifiers,
             include_empty,
             output_folder,
             base_file_name,
@@ -209,7 +204,6 @@ mod tests {
             "normalized_jsonl".to_string(),
             "iso".to_string(),
             true,
-            true,
             false,
             params.clone(),
         );
@@ -220,7 +214,6 @@ mod tests {
         assert_eq!(config.format, "normalized_jsonl");
         assert_eq!(config.date_format, "iso");
         assert!(config.with_timeline);
-        assert!(config.with_qualifiers);
         assert!(!config.include_empty);
         assert_eq!(config.params, params);
     }
@@ -233,7 +226,6 @@ mod tests {
             "file".to_string(),
             "jsonl".to_string(),
             "iso_utc".to_string(),
-            false,
             false,
             true,
             HashMap::new(),

@@ -424,7 +424,6 @@ mod tests {
             "iso".to_string(),
             false,
             true,
-            true,
             HashMap::new(),
         );
 
@@ -473,7 +472,6 @@ mod tests {
             "file".to_string(),
             "jsonl".to_string(),
             "iso".to_string(),
-            true,
             true,
             true,
             HashMap::new(),

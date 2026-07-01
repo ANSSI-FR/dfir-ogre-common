@@ -226,7 +226,6 @@ mod tests {
             "jsonl".to_string(),
             "iso".to_string(),
             false,
-            false,
             true,
             HashMap::new(),
         );

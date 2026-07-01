@@ -30,7 +30,6 @@ pub struct FileReport {
     pub format: String,
     pub date_format: String,
     pub with_timeline: bool,
-    pub with_qualifiers: bool,
     pub include_empty: bool,
     pub file_name: String,
     pub num_lines: usize,
@@ -174,9 +173,8 @@ impl OutputWriter {
 #[derive(Clone)]
 #[pyclass(from_py_object)]
 pub struct Output {
-    outputs: Vec<(OutputWriter, bool)>,
-    line_builder_without_qualifiers: Option<LineBuilder>,
-    line_builder_with_qualifiers: Option<LineBuilder>,
+    outputs: Vec<OutputWriter>,
+    line_builder: LineBuilder,
 }
 impl Output {
     fn select_datatype(
@@ -228,8 +226,6 @@ impl Output {
         //series of flag that defines what needs to be computed
         let mut compute_timeline = false;
         let mut compute_hash = false;
-        let mut compute_with_qualifiers = false;
-        let mut compute_without_qualifiers = false;
         let mut outputs = Vec::new();
 
         for output_conf in &run_config.output {
@@ -243,11 +239,6 @@ impl Output {
                 None => DEFAULT_COMPRESSION_LEVEL,
             };
 
-            if output_conf.with_qualifiers {
-                compute_with_qualifiers = true
-            } else {
-                compute_without_qualifiers = true
-            }
             if output_conf.with_timeline {
                 compute_timeline = true
             }
@@ -265,7 +256,6 @@ impl Output {
                 format: output_conf.format.clone(),
                 date_format: output_conf.date_format.clone(),
                 with_timeline: output_conf.with_timeline,
-                with_qualifiers: output_conf.with_qualifiers,
                 include_empty: output_conf.include_empty,
                 ..Default::default()
             };
@@ -331,7 +321,7 @@ impl Output {
                     OutputWriter::NormalizedCsv(Arc::new(Mutex::new(csv)))
                 }
             };
-            outputs.push((output_writer, output_conf.with_qualifiers))
+            outputs.push(output_writer)
         }
 
         let field_mapping = match &data_type_conf.field_mapping {
@@ -344,81 +334,31 @@ impl Output {
             false => None,
         };
 
-        //create if at least one output configuration requires qualifiers
-        let line_builder_with_qualifiers = match compute_with_qualifiers {
-            true => Some(LineBuilder::new(
-                metadata.clone(),
-                timeline_builder.clone(),
-                field_mapping.clone(),
-                compute_hash,
-                data_type_conf.has_primary_key,
-                run_config.force_snake_case,
-            )),
-            false => None,
-        };
-        //create if at least one output configuration does not requires qualifiers
-        let line_builder_without_qualifiers = match compute_without_qualifiers {
-            true => Some(LineBuilder::new(
-                metadata,
-                timeline_builder,
-                field_mapping,
-                compute_hash,
-                data_type_conf.has_primary_key,
-                run_config.force_snake_case,
-            )),
-            false => None,
-        };
+        let line_builder = LineBuilder::new(
+            metadata,
+            timeline_builder,
+            field_mapping,
+            compute_hash,
+            data_type_conf.has_primary_key,
+            run_config.force_snake_case,
+        );
 
         //write metadata for normalized output
-        for (writer, _) in &mut outputs {
-            if let Some(line_builder) = &line_builder_without_qualifiers {
-                writer.write_metadata(line_builder)?;
-            } else if let Some(line_builder) = &line_builder_with_qualifiers {
-                writer.write_metadata(line_builder)?;
-            }
+        for writer in &mut outputs {
+            writer.write_metadata(&line_builder)?;
         }
 
         Ok(Self {
             outputs,
-            line_builder_without_qualifiers,
-            line_builder_with_qualifiers,
+            line_builder,
         })
     }
 
     pub fn write(&mut self, data: &mut Record) -> Result<(), Error> {
-        //build the record with qualifiers if necessary
-        if let Some(builder) = &mut self.line_builder_with_qualifiers {
-            if self.line_builder_without_qualifiers.is_some() {
-                //the build process removes data from the record, so we clone it if two builder are required
-                builder.build(&mut data.clone())?;
-            } else {
-                builder.build(data)?;
-            }
-        }
-        //build the record without qualifiers if necessary
-        if let Some(builder) = &mut self.line_builder_without_qualifiers {
-            builder.build(data)?;
-        }
+        self.line_builder.build(data)?;
 
-        for (output, with_qualifiers) in &mut self.outputs {
-            match with_qualifiers {
-                true => {
-                    let builder = &mut self
-                        .line_builder_with_qualifiers
-                        .as_mut()
-                        .expect("A line builder with qualifier must exists at this point");
-
-                    output.write(builder)?;
-                }
-                false => {
-                    let builder = &mut self
-                        .line_builder_without_qualifiers
-                        .as_mut()
-                        .expect("A line builder without qualifier must exists at this point");
-
-                    output.write(builder)?;
-                }
-            }
+        for output in &mut self.outputs {
+            output.write(&self.line_builder)?;
         }
 
         data.0.clear();
@@ -432,7 +372,7 @@ impl Output {
 
     /// Exit the context, ensuring each writer is cleanly closed.
     pub fn __exit__(&mut self, _exc_type: Py<PyAny>, _exc_value: Py<PyAny>, _traceback: Py<PyAny>) {
-        for (out, _) in &mut self.outputs {
+        for out in &mut self.outputs {
             let _ = out.close();
         }
     }
@@ -442,7 +382,7 @@ impl Output {
             ..Default::default()
         };
 
-        for (out, _) in &self.outputs {
+        for out in &self.outputs {
             report.file_reports.push(out.result());
         }
         report
@@ -536,7 +476,6 @@ mod tests {
             format.to_string(),
             "iso".to_string(),
             false,
-            false,
             true,
             HashMap::new(),
         )
@@ -545,7 +484,6 @@ mod tests {
     fn json_output_config(
         base_file_name: &str,
         output_folder: &Path,
-        with_qualifiers: bool,
         params: HashMap<String, String>,
     ) -> OutputConfiguration {
         OutputConfiguration::new(
@@ -555,7 +493,6 @@ mod tests {
             "jsonl".to_string(),
             "iso".to_string(),
             false,
-            with_qualifiers,
             true,
             params,
         )
@@ -586,7 +523,7 @@ mod tests {
         record.add("event", Value::String("login".to_owned()));
 
         output.write(&mut record).unwrap();
-        for (writer, _) in &mut output.outputs {
+        for writer in &mut output.outputs {
             writer.close().unwrap();
         }
         let report = output.get_report();
@@ -645,12 +582,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert(COMPRESSION_LEVEL.to_owned(), "fast".to_owned());
         let run_config = RunConfiguration::new(
-            vec![json_output_config(
-                "bad_compression",
-                &output_folder,
-                false,
-                params,
-            )],
+            vec![json_output_config("bad_compression", &output_folder, params)],
             true,
             None,
         );
@@ -668,8 +600,8 @@ mod tests {
     }
 
     #[test]
-    fn mixed_qualifier_outputs_use_separate_line_builders() {
-        let output_folder = test_output_folder("output_mixed_qualifiers");
+    fn multiple_json_outputs_receive_plain_records() {
+        let output_folder = test_output_folder("output_multiple_plain");
         let field_mapping = FieldMapping::new(
             vec![Field::Single {
                 name: FieldName::new(
@@ -686,8 +618,8 @@ mod tests {
         );
         let run_config = RunConfiguration::new(
             vec![
-                json_output_config("plain", &output_folder, false, HashMap::new()),
-                json_output_config("qualified", &output_folder, true, HashMap::new()),
+                json_output_config("first", &output_folder, HashMap::new()),
+                json_output_config("second", &output_folder, HashMap::new()),
             ],
             true,
             None,
@@ -704,28 +636,26 @@ mod tests {
         record.add("event", Value::String("login".to_owned()));
 
         output.write(&mut record).unwrap();
-        for (writer, _) in &mut output.outputs {
+        for writer in &mut output.outputs {
             writer.close().unwrap();
         }
         drop(output);
 
-        let plain: serde_json::Value = serde_json::from_str(
-            fs::read_to_string(output_folder.join("plain.events.jsonl"))
+        let first: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("first.events.jsonl"))
                 .unwrap()
                 .trim(),
         )
         .unwrap();
-        let qualified: serde_json::Value = serde_json::from_str(
-            fs::read_to_string(output_folder.join("qualified.events.jsonl"))
+        let second: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("second.events.jsonl"))
                 .unwrap()
                 .trim(),
         )
         .unwrap();
 
-        assert_eq!(plain["event"], "login");
-        assert!(plain.get("event:event_tag").is_none());
-        assert_eq!(qualified["event:event_tag"], "login");
-        assert!(qualified.get("event").is_none());
+        assert_eq!(first["event"], "login");
+        assert_eq!(second["event"], "login");
 
         remove_dir_if_exists(&output_folder);
     }

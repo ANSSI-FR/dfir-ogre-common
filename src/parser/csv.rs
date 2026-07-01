@@ -215,7 +215,6 @@ mod tests {
             "jsonl".to_string(),
             "iso".to_string(),
             false,
-            false,
             true,
             HashMap::new(),
         )
@@ -445,7 +444,6 @@ mod tests {
             "iso".to_string(),
             false,
             false,
-            false,
             HashMap::new(),
         );
 
@@ -532,7 +530,6 @@ mod tests {
             "iso".to_string(),
             false,
             false,
-            false,
             HashMap::new(),
         );
 
@@ -602,7 +599,6 @@ mod tests {
             "csv".to_string(),
             "iso".to_string(),
             true,
-            false,
             false,
             HashMap::new(),
         );
@@ -680,7 +676,6 @@ mod tests {
             "iso".to_string(),
             true,
             false,
-            false,
             HashMap::new(),
         );
 
@@ -753,16 +748,16 @@ mod tests {
         }
     }
 
-    /// Tests parsing of an NTFSInfo CSV file with qualifiers and null handling.
+    /// Tests parsing of an NTFSInfo CSV file with plain field names and null handling.
     ///
     /// It ensures that:
-    /// - The output JSONL file contains properly formatted qualified field names (e.g., "pe_subsystem:pe_subsystem")
+    /// - The output JSONL file contains plain output field names
     /// - The specified field is correctly identified as null in the second line
     /// - The file path in the second line matches expected value "\\$Bitmap"
     #[test]
-    fn ntfs_info_qualifiers_and_null_parse() {
+    fn ntfs_info_plain_names_and_null_parse() {
         let output_folder = ".tmp";
-        let base_file_name = "ntfsinfo_qualifiers_null_parse";
+        let base_file_name = "ntfsinfo_plain_names_null_parse";
         let targetfile = format!("{output_folder}/{base_file_name}.ntfs_info.jsonl");
 
         if Path::new(&targetfile).exists() {
@@ -776,7 +771,6 @@ mod tests {
             "jsonl".to_string(),
             "iso".to_string(),
             false,
-            true,
             true,
             HashMap::new(),
         );
@@ -807,12 +801,12 @@ mod tests {
         //second line
         let line = lines[1].as_object().unwrap();
         let _subsystem = line
-            .get("pe_subsystem:pe_subsystem")
+            .get("pe_subsystem")
             .unwrap()
             .as_str()
             .unwrap();
 
-        let file_path = line.get("file_path:file_path").unwrap().as_str().unwrap();
+        let file_path = line.get("file_path").unwrap().as_str().unwrap();
         assert_eq!("\\$Bitmap", file_path)
     }
 
@@ -838,7 +832,6 @@ mod tests {
             "jsonl".to_string(),
             "iso".to_string(),
             false,
-            true,
             true,
             HashMap::new(),
         );
@@ -957,7 +950,6 @@ mod tests {
             "iso".to_string(),
             true,
             true,
-            true,
             HashMap::new(),
         );
 
@@ -1014,7 +1006,6 @@ mod tests {
             "file".to_string(),
             "csv".to_string(),
             "iso".to_string(),
-            false,
             false,
             false,
             HashMap::new(),
@@ -1089,7 +1080,6 @@ mod tests {
             "file".to_string(),
             "jsonl".to_string(),
             "iso".to_string(),
-            true,
             true,
             true,
             HashMap::new(),
