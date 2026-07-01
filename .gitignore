@@ -79,4 +79,4 @@ docs/_build/
 /test_data/leveldb/LOG*
 
 AGENTS.md
-/doc/superpowers
+/docs/superpowers
