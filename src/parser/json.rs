@@ -203,6 +203,10 @@ pub fn parse_json_object(
     for (name, json_value) in json {
         match parser_tree {
             Some(p_tree) => {
+                if !parse_unknown && !p_tree.parsers.contains_key(&name) {
+                    continue;
+                }
+
                 if let JsonValue::String(value) = &json_value
                     && parse_mapped_string_field(&name, value, p_tree, record, multi_input_context)?
                 {
@@ -686,6 +690,56 @@ mod tests {
         let jsonl = fs::read_to_string(output_folder.join("ignored.json_edge.jsonl")).unwrap();
         let line: serde_json::Value = serde_json::from_str(jsonl.trim()).unwrap();
         assert!(line.get("details").is_none());
+        assert_eq!(line["ogre_md"]["computer"], "test");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn json_default_ignore_only_emits_mapped_primitives() {
+        let output_folder = test_folder("json_default_ignore_primitives");
+        let input_path = output_folder.join("unknown_primitives.json");
+        fs::write(
+            &input_path,
+            r#"{
+                "known": "visible",
+                "unknown_string": "hidden",
+                "unknown_int": 7,
+                "unknown_bool": true,
+                "unknown_null": null,
+                "unknown_array": ["hidden", 1, false]
+            }"#,
+        )
+        .unwrap();
+        let field_mapping = FieldMapping::new(
+            vec![Field::Single {
+                name: FieldName::new("known".to_owned(), false, None, None, None),
+                parser: Parser::String(),
+                default_value: None,
+            }],
+            Some(Parser::Ignore()),
+        );
+        let run_config =
+            RunConfiguration::new(vec![output_conf("ignored", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_edge", field_mapping);
+
+        let report = parse_json(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+        let jsonl = fs::read_to_string(output_folder.join("ignored.json_edge.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(jsonl.trim()).unwrap();
+        assert_eq!(line["known"], "visible");
+        assert!(line.get("unknown_string").is_none());
+        assert!(line.get("unknown_int").is_none());
+        assert!(line.get("unknown_bool").is_none());
+        assert!(line.get("unknown_null").is_none());
+        assert!(line.get("unknown_array").is_none());
         assert_eq!(line["ogre_md"]["computer"], "test");
 
         remove_dir_if_exists(&output_folder);
