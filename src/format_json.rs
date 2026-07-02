@@ -1,12 +1,64 @@
 use std::{fs::OpenOptions, path::Path, sync::Arc};
 
 use crate::{
-    DateOutputCodec, Error, FileReport, Metadata, Value,
+    DateOutputCodec, Error, FileReport, Metadata, Record, Value, escape_special_chars,
     line_builder::{LineBuilder, OUTPUT_METADATA_FIELD, OUTPUT_METADATA_ID_FIELD},
     metadata::MetadataSerialized,
     output::OutputType,
     output_writer::{FileWriter, GzipWriter, Writer},
 };
+
+enum JsonExtraField<'a> {
+    Metadata(&'a MetadataSerialized),
+    String(&'a str),
+}
+
+impl JsonExtraField<'_> {
+    fn json_serialise(&self, buffer: &mut String) {
+        match self {
+            Self::Metadata(metadata) => buffer.push_str(metadata.0.as_str()),
+            Self::String(value) => {
+                buffer.push('\"');
+                buffer.push_str(&escape_special_chars(value));
+                buffer.push('\"');
+            }
+        }
+    }
+}
+
+fn json_serialise_record_with_extra_field(
+    record: &Record,
+    extra_key: &str,
+    extra_value: JsonExtraField<'_>,
+    buffer: &mut String,
+    date_codec: &DateOutputCodec,
+    include_empty: bool,
+) -> Result<(), Error> {
+    buffer.push('{');
+    let mut pos = 0;
+    for (key, value) in record.iter() {
+        if !include_empty && let Value::Null() = value {
+            continue;
+        }
+        if pos != 0 {
+            buffer.push(',');
+        }
+        buffer.push('\"');
+        buffer.push_str(&escape_special_chars(key));
+        buffer.push_str("\":");
+        Value::json_serialise_value(value, buffer, date_codec, include_empty)?;
+        pos += 1;
+    }
+    if pos != 0 {
+        buffer.push(',');
+    }
+    buffer.push('\"');
+    buffer.push_str(&escape_special_chars(extra_key));
+    buffer.push_str("\":");
+    extra_value.json_serialise(buffer);
+    buffer.push('}');
+    Ok(())
+}
 
 /// A writer for outputting structured data in JSONL (JSON Lines) format.
 /// This struct supports writing to either plain text files or compressed gzip files,
@@ -165,14 +217,12 @@ impl JsonFormatter {
                 self.file_report.num_lines += 1;
             }
         } else {
-            let mut record = data.data.clone();
-            record.add(
-                OUTPUT_METADATA_FIELD,
-                Value::Metadata(self.serialized_metadata(&line_builder.metadata)),
-            );
+            let metadata = self.serialized_metadata(&line_builder.metadata);
             self.line_buffer.clear();
-            Value::json_serialise_record(
-                &record,
+            json_serialise_record_with_extra_field(
+                &data.data,
+                OUTPUT_METADATA_FIELD,
+                JsonExtraField::Metadata(&metadata),
                 &mut self.line_buffer,
                 &self.output_date_codec,
                 self.include_empty,
@@ -214,15 +264,12 @@ impl JsonFormatter {
                 self.file_report.num_lines += 1;
             }
         }
-        let mut record = data.data.clone();
-        record.add(
-            OUTPUT_METADATA_ID_FIELD,
-            Value::String(line_builder.metadata_id.clone()),
-        );
 
         self.line_buffer.clear();
-        Value::json_serialise_record(
-            &record,
+        json_serialise_record_with_extra_field(
+            &data.data,
+            OUTPUT_METADATA_ID_FIELD,
+            JsonExtraField::String(&line_builder.metadata_id),
             &mut self.line_buffer,
             &self.output_date_codec,
             self.include_empty,
@@ -374,6 +421,32 @@ mod tests {
 
         drop(output);
         remove_if_exists(&path);
+    }
+
+    #[test]
+    fn serialise_record_with_extra_field_does_not_mutate_record() {
+        let mut record = Record::new();
+        record.add("greetings", Value::String("Hello".to_owned()));
+        let metadata = MetadataSerialized(Arc::new(
+            "{\"computer\":\"test\",\"data_type\":\"\"}".to_owned(),
+        ));
+        let mut buffer = String::new();
+
+        json_serialise_record_with_extra_field(
+            &record,
+            OUTPUT_METADATA_FIELD,
+            JsonExtraField::Metadata(&metadata),
+            &mut buffer,
+            &DateOutputCodec::Iso(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            "{\"greetings\":\"Hello\",\"ogre_md\":{\"computer\":\"test\",\"data_type\":\"\"}}",
+            buffer
+        );
+        assert!(!record.contains_key(OUTPUT_METADATA_FIELD));
     }
 
     #[test]
