@@ -91,9 +91,9 @@ impl LineData {
     }
 
     /// Clears all data and timeline records, resetting the hasher if present.
-    /// Clears all data and timeline records, resetting the hasher if present.
     fn clear(&mut self) {
         self.data_id = None;
+        self.data_id_hasher.reset();
         self.data.clear();
         self.timeline.clear();
     }
@@ -1476,6 +1476,34 @@ mod tests {
             build_hashed_line(second_metadata, field_mapping, "stable-id", "same message");
 
         assert_ne!(first_id, second_id);
+    }
+
+    #[test]
+    fn compute_hash_resets_between_reused_builds() {
+        let field_mapping = primary_key_mapping();
+        let metadata = Metadata::new("host".into());
+        let expected_id = build_hashed_line(
+            metadata.clone(),
+            field_mapping.clone(),
+            "stable-id",
+            "same message",
+        );
+        let mut line_builder = LineBuilder::new(metadata, None, field_mapping, true, true, true);
+
+        let mut first_record = Record::new();
+        first_record.add("id", Value::String("stable-id".to_owned()));
+        first_record.add("message", Value::String("same message".to_owned()));
+        line_builder.build(&mut first_record).unwrap();
+        let first_id = line_builder.line_data.data_id.clone().unwrap();
+
+        let mut second_record = Record::new();
+        second_record.add("id", Value::String("stable-id".to_owned()));
+        second_record.add("message", Value::String("same message".to_owned()));
+        line_builder.build(&mut second_record).unwrap();
+        let second_id = line_builder.line_data.data_id.clone().unwrap();
+
+        assert_eq!(first_id, expected_id);
+        assert_eq!(second_id, expected_id);
     }
 
     #[test]
