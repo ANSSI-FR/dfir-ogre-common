@@ -1,7 +1,11 @@
 use blake3::Hasher;
 use chrono::{DateTime, Utc};
 
-use crate::{DateOutputCodec, Error, Record, metadata::MetadataSerialized, serialize_date};
+use crate::{
+    DateOutputCodec, Error, Record, metadata::MetadataSerialized,
+    serialise::{JsonArrayWriter, JsonObjectWriter},
+    serialize_date,
+};
 use pyo3::prelude::*;
 /// Possible data types for a record. Mirrors JSON types and adds Rust primitives like `i64`
 /// and a UTC `DateTime`.
@@ -21,6 +25,10 @@ pub enum Value {
 }
 
 impl Value {
+    fn should_emit_json_value(value: &Value, include_empty: bool) -> bool {
+        include_empty || !matches!(value, Value::Null())
+    }
+
     /// Returns `true` if the variant is `Value::Null`.
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null())
@@ -39,23 +47,18 @@ impl Value {
         date_codec: &DateOutputCodec,
         include_empty: bool,
     ) -> Result<(), Error> {
-        buffer.push('{');
-        let mut pos = 0;
+        let mut object = JsonObjectWriter::new(buffer);
         for (key, el) in record.iter() {
-            if !include_empty && let Value::Null() = el {
-                continue;
+            let should_emit = Self::should_emit_json_value(el, include_empty);
+            let mut value_buffer = String::new();
+            if should_emit {
+                Value::json_serialise_value(el, &mut value_buffer, date_codec, include_empty)?;
             }
-            if pos != 0 {
-                buffer.push(',');
-            }
-            let escaped = escape_special_chars(key);
-            buffer.push('\"');
-            buffer.push_str(&escaped);
-            buffer.push_str("\":");
-            Value::json_serialise_value(el, buffer, date_codec, include_empty)?;
-            pos += 1;
+            object.field_if(key, should_emit, |buffer| {
+                buffer.push_str(&value_buffer);
+            });
         }
-        buffer.push('}');
+        object.finish();
         Ok(())
     }
 
@@ -109,14 +112,23 @@ impl Value {
                 buffer.push('\"');
             }
             Value::Array(field_values) => {
-                buffer.push('[');
-                for (i, el) in field_values.iter().enumerate() {
-                    if i != 0 {
-                        buffer.push(',');
+                let mut array = JsonArrayWriter::new(buffer);
+                for el in field_values {
+                    let should_emit = Self::should_emit_json_value(el, include_empty);
+                    let mut value_buffer = String::new();
+                    if should_emit {
+                        Value::json_serialise_value(
+                            el,
+                            &mut value_buffer,
+                            date_codec,
+                            include_empty,
+                        )?;
                     }
-                    Value::json_serialise_value(el, buffer, date_codec, include_empty)?;
+                    array.element_if(should_emit, |buffer| {
+                        buffer.push_str(&value_buffer);
+                    });
                 }
-                buffer.push(']');
+                array.finish();
             }
             Value::Int(v) => {
                 buffer.push_str(&v.to_string());
