@@ -929,9 +929,11 @@ impl TimeLineBuilder {
 mod tests {
 
     use crate::{
-        DateInputCodec, FieldMapping, Metadata, Parser, Record, date_util::DateOutputCodec,
-        field::Field, line_builder::LineBuilder,
+        DateInputCodec, FieldMapping, Metadata, Parser, Record, Value,
+        date_util::DateOutputCodec, field::Field, line_builder::LineBuilder,
+        metadata::MetadataSerialized,
     };
+    use std::sync::Arc;
 
     use super::*;
 
@@ -1390,5 +1392,80 @@ mod tests {
             assert_eq!(&rec[8], "");
         }
         assert_eq!(1, line_number);
+    }
+
+    fn timeline_for_serialization_tests() -> TimeLine {
+        TimeLine {
+            computer: Some("COMP;\"1\"\nnext".to_owned()),
+            timestamp: crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso())
+                .unwrap(),
+            timestamp_meaning: "Created".to_owned(),
+            data_type: "evtx".to_owned(),
+            related_user: "user".to_owned(),
+            description: "desc".to_owned(),
+            additional_description: "add".to_owned(),
+            metadata: Some(MetadataSerialized(Arc::new(
+                r#"{"computer":"COMP;\"1\"\nnext","data_type":"evtx"}"#.to_owned(),
+            ))),
+            data: Some({
+                let mut record = Record::new();
+                record.add("message", Value::String("hello;\"world\"\nnext".to_owned()));
+                record
+            }),
+            ..TimeLine::default()
+        }
+    }
+
+    #[test]
+    fn timeline_json_serialise_with_metadata_and_data_parses() {
+        let tl = timeline_for_serialization_tests();
+        let mut json = String::new();
+
+        tl.json_serialise(&mut json, &DateOutputCodec::IsoUtc(), false)
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["computer"], "COMP;\"1\"\nnext");
+        assert_eq!(parsed["metadata"]["data_type"], "evtx");
+        assert_eq!(parsed["data"]["message"], "hello;\"world\"\nnext");
+    }
+
+    #[test]
+    fn timeline_json_serialise_missing_optional_metadata_and_data_parses() {
+        let mut tl = timeline_for_serialization_tests();
+        tl.metadata = None;
+        tl.data = None;
+
+        let mut json = String::new();
+        tl.json_serialise(&mut json, &DateOutputCodec::IsoUtc(), false)
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("metadata").is_none());
+        assert!(parsed.get("data").is_none());
+        assert!(!json.contains(",,"));
+        assert!(!json.contains(",}"));
+    }
+
+    #[test]
+    fn timeline_csv_serialise_quotes_metadata_and_data_fields() {
+        let tl = timeline_for_serialization_tests();
+
+        let mut csv = String::new();
+        TimeLine::csv_serialise_header(&mut csv, false);
+        csv.push('\n');
+        tl.csv_serialise(&mut csv, &DateOutputCodec::IsoUtc(), false, false)
+            .unwrap();
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(Box::new(csv.as_bytes()));
+        let record = reader.records().next().unwrap().unwrap();
+
+        assert_eq!(&record[0], "COMP;\"1\"\nnext");
+        assert!(record[7].contains(r#""data_type":"evtx""#));
+        assert!(record[8].contains("hello;\\\"world\\\"\\nnext"));
+        assert_eq!(9, record.len());
     }
 }
