@@ -12,8 +12,9 @@ use pyo3::prelude::*;
 
 use crate::{
     FieldName, Record, Value, date_util::DateOutputCodec, errors::Error, escape_special_chars,
-    format_csv::CSV_DELIMITER, metadata::MetadataSerialized, serialize_date,
-    value::escape_special_chars_csv,
+    format_csv::CSV_DELIMITER, metadata::MetadataSerialized,
+    serialise::{CsvRowWriter, JsonObjectWriter},
+    serialize_date,
 };
 
 const MACB_FILLER: &str = "MACBMACB";
@@ -53,46 +54,49 @@ impl TimeLine {
         date_codec: &DateOutputCodec,
         include_empty: bool,
     ) -> Result<(), Error> {
-        buffer.push('{');
-        let mut first = true;
-        if let Some(id) = &self.id {
-            Self::serialise_json_string("id", id, buffer, first);
-            first = false
-        }
-        if let Some(computer) = &self.computer {
-            Self::serialise_json_string("computer", computer, buffer, first);
-            first = false
+        let mut data_buffer = String::new();
+        if let Some(data) = &self.data {
+            data.json_serialise(&mut data_buffer, date_codec, include_empty)?;
         }
 
-        Self::serialise_json_date("timestamp", &self.timestamp, date_codec, buffer, first);
-        first = false;
-        Self::serialise_json_string("timestamp_meaning", &self.timestamp_meaning, buffer, first);
-        Self::serialise_json_string("data_type", &self.data_type, buffer, first);
-        Self::serialise_json_string("related_user", &self.related_user, buffer, first);
-        Self::serialise_json_string("description", &self.description, buffer, first);
-        Self::serialise_json_string(
-            "additional_description",
-            &self.additional_description,
-            buffer,
-            first,
-        );
-        if let Some(metadata_id) = &self.metadata_id {
-            Self::serialise_json_string("metadata_id", metadata_id, buffer, first);
-        }
-        if let Some(metadata) = &self.metadata {
-            buffer.push(',');
-            buffer.push_str("\"metadata\":");
-            buffer.push_str(metadata.0.as_str());
-        }
-        if let Some(data_id) = &self.data_id {
-            Self::serialise_json_string("data_id", data_id, buffer, first);
-        }
-        if let Some(data) = &self.data {
-            buffer.push(',');
-            buffer.push_str("\"data\":");
-            data.json_serialise(buffer, date_codec, include_empty)?;
-        }
-        buffer.push('}');
+        let mut object = JsonObjectWriter::new(buffer);
+        object.field_if("id", self.id.is_some(), |buffer| {
+            Self::write_json_string_value(self.id.as_deref().unwrap_or_default(), buffer);
+        });
+        object.field_if("computer", self.computer.is_some(), |buffer| {
+            Self::write_json_string_value(self.computer.as_deref().unwrap_or_default(), buffer);
+        });
+        object.field_raw("timestamp", |buffer| {
+            Self::write_json_string_value(&serialize_date(&self.timestamp, date_codec), buffer);
+        });
+        object.field_raw("timestamp_meaning", |buffer| {
+            Self::write_json_string_value(&self.timestamp_meaning, buffer);
+        });
+        object.field_raw("data_type", |buffer| {
+            Self::write_json_string_value(&self.data_type, buffer);
+        });
+        object.field_raw("related_user", |buffer| {
+            Self::write_json_string_value(&self.related_user, buffer);
+        });
+        object.field_raw("description", |buffer| {
+            Self::write_json_string_value(&self.description, buffer);
+        });
+        object.field_raw("additional_description", |buffer| {
+            Self::write_json_string_value(&self.additional_description, buffer);
+        });
+        object.field_if("metadata_id", self.metadata_id.is_some(), |buffer| {
+            Self::write_json_string_value(self.metadata_id.as_deref().unwrap_or_default(), buffer);
+        });
+        object.field_if("metadata", self.metadata.is_some(), |buffer| {
+            buffer.push_str(self.metadata.as_ref().unwrap().0.as_str());
+        });
+        object.field_if("data_id", self.data_id.is_some(), |buffer| {
+            Self::write_json_string_value(self.data_id.as_deref().unwrap_or_default(), buffer);
+        });
+        object.field_if("data", self.data.is_some(), |buffer| {
+            buffer.push_str(&data_buffer);
+        });
+        object.finish();
         Ok(())
     }
 
@@ -120,33 +124,9 @@ impl TimeLine {
         self.id = Some(BASE64.encode(hasher.finalize().as_slice()));
     }
 
-    fn serialise_json_string(name: &str, value: &str, buffer: &mut String, first: bool) {
-        if !first {
-            buffer.push(',');
-        }
-        buffer.push('\"');
-        buffer.push_str(name);
-        buffer.push_str("\":");
+    fn write_json_string_value(value: &str, buffer: &mut String) {
         buffer.push('\"');
         buffer.push_str(&escape_special_chars(value));
-        buffer.push('\"');
-    }
-
-    fn serialise_json_date(
-        name: &str,
-        date: &DateTime<Utc>,
-        date_codec: &DateOutputCodec,
-        buffer: &mut String,
-        first: bool,
-    ) {
-        if !first {
-            buffer.push(',');
-        }
-        buffer.push('\"');
-        buffer.push_str(name);
-        buffer.push_str("\":");
-        buffer.push('\"');
-        buffer.push_str(&serialize_date(date, date_codec));
         buffer.push('\"');
     }
 
@@ -157,71 +137,32 @@ impl TimeLine {
         include_empty: bool,
         normalized: bool,
     ) -> Result<(), Error> {
-        let mut first = true;
+        let mut row = CsvRowWriter::new(buffer);
         if normalized {
-            if let Some(id) = &self.id {
-                Self::serialise_csv_string(id, buffer, first);
-            } else {
-                Self::serialise_csv_string("", buffer, first);
-            }
-            first = false;
+            row.quoted_field(self.id.as_deref().unwrap_or_default());
         }
-        if let Some(computer) = &self.computer {
-            Self::serialise_csv_string(computer, buffer, first);
-        } else {
-            Self::serialise_csv_string("", buffer, first);
-        }
-        first = false;
-
-        Self::serialise_csv_date(&self.timestamp, date_codec, buffer, first);
-        Self::serialise_csv_string(&self.timestamp_meaning, buffer, first);
-        Self::serialise_csv_string(&self.data_type, buffer, first);
-        Self::serialise_csv_string(&self.related_user, buffer, first);
-        Self::serialise_csv_string(&self.description, buffer, first);
-        Self::serialise_csv_string(&self.additional_description, buffer, first);
+        row.quoted_field(self.computer.as_deref().unwrap_or_default());
+        row.raw_field(&serialize_date(&self.timestamp, date_codec));
+        row.quoted_field(&self.timestamp_meaning);
+        row.quoted_field(&self.data_type);
+        row.quoted_field(&self.related_user);
+        row.quoted_field(&self.description);
+        row.quoted_field(&self.additional_description);
 
         if normalized {
-            if let Some(metadata_id) = &self.metadata_id {
-                Self::serialise_csv_string(metadata_id, buffer, first);
-            } else {
-                Self::serialise_csv_string("", buffer, first);
-            }
-            if let Some(data_id) = &self.data_id {
-                Self::serialise_csv_string(data_id, buffer, first);
-            } else {
-                Self::serialise_csv_string("", buffer, first);
-            }
+            row.quoted_field(self.metadata_id.as_deref().unwrap_or_default());
+            row.quoted_field(self.data_id.as_deref().unwrap_or_default());
         } else {
-            if let Some(metadata) = &self.metadata {
-                buffer.push(CSV_DELIMITER);
-                buffer.push('\"');
-                buffer.push_str(metadata.0.as_str());
-                buffer.push('\"');
-            } else {
-                Self::serialise_csv_string("", buffer, first);
-            }
+            row.quoted_field(self.metadata.as_ref().map(|m| m.0.as_str()).unwrap_or_default());
             if let Some(data) = &self.data {
-                buffer.push(CSV_DELIMITER);
-                buffer.push('\"');
                 let mut object_buffer = String::new();
                 data.json_serialise(&mut object_buffer, date_codec, include_empty)?;
-                let escaped = escape_special_chars_csv(&object_buffer);
-                buffer.push_str(&escaped);
-                buffer.push('\"');
+                row.quoted_field(&object_buffer);
             } else {
-                Self::serialise_csv_string("", buffer, first);
+                row.empty_field();
             }
         }
         Ok(())
-    }
-
-    fn serialise_csv_string(value: &str, buffer: &mut String, first: bool) {
-        if !first {
-            buffer.push(CSV_DELIMITER)
-        }
-        buffer.push('\"');
-        buffer.push_str(&escape_special_chars_csv(value));
-        buffer.push('\"');
     }
 
     pub fn csv_serialise_header(buffer: &mut String, normalized: bool) {
@@ -256,17 +197,6 @@ impl TimeLine {
         }
     }
 
-    fn serialise_csv_date(
-        date: &DateTime<Utc>,
-        date_codec: &DateOutputCodec,
-        buffer: &mut String,
-        first: bool,
-    ) {
-        if !first {
-            buffer.push(CSV_DELIMITER)
-        }
-        buffer.push_str(&serialize_date(date, date_codec));
-    }
 }
 
 ///
