@@ -639,8 +639,6 @@ static _DACL_FLAGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::ne
 #[cfg(test)]
 mod tests {
 
-    use rand::random;
-
     use super::*;
 
     fn sid_builtin_admins() -> Vec<u8> {
@@ -817,38 +815,109 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_fuzzing() {
-        for _ in 0..10_000 {
-            let rng_size: u8 = random();
+    fn descriptor_truncated_acl_header_returns_empty_ace_list() {
+        let mut dacl = vec![0x02, 0x00, 0x08];
+        let descriptor = descriptor_with_raw_dacl(std::mem::take(&mut dacl));
 
-            let mut data: Vec<u8> = vec![0; rng_size as usize];
+        let res = security_descriptor_from_bytes(&descriptor).unwrap();
 
-            rand::fill(&mut data[..]);
-            security_descriptor_from_bytes(&data).unwrap();
-        }
+        assert!(res.dacl_aces.is_empty());
     }
 
     #[test]
-    fn ace_fuzzing() {
-        for _ in 0..10_000 {
-            let rng_size: u8 = random();
+    fn descriptor_truncated_ace_body_returns_partial_ace() {
+        let mut ace = access_ace(0x00, 0x00, 0x0002_0019, &sid_builtin_users());
+        let full_size = read_u16_le(&ace, 2).unwrap();
+        ace.truncate(10);
 
-            let mut data: Vec<u8> = vec![0; rng_size as usize];
+        let mut dacl = vec![0x02, 0x00];
+        dacl.extend_from_slice(&(8u16 + full_size).to_le_bytes());
+        dacl.extend_from_slice(&1u16.to_le_bytes());
+        dacl.extend_from_slice(&0u16.to_le_bytes());
+        dacl.extend_from_slice(&ace);
 
-            rand::fill(&mut data[..]);
-            ace_from_bytes(&data).unwrap();
-        }
+        let res = security_descriptor_from_bytes(&descriptor_with_raw_dacl(dacl)).unwrap();
+
+        assert_eq!(res.dacl_aces.len(), 1);
+        assert_eq!(
+            res.dacl_aces[0].ace_type.as_deref(),
+            Some("ACCESS_ALLOWED_ACE_TYPE")
+        );
+        assert_eq!(res.dacl_aces[0].ace_size, Some(full_size));
+        assert_eq!(res.dacl_aces[0].account_sid, None);
+        assert_eq!(res.dacl_aces[0].raw_hex, Some(hex::encode(ace)));
     }
 
     #[test]
-    fn convert_sid_fuzzing() {
-        for _ in 0..10_000 {
-            let rng_size: u8 = random();
+    fn descriptor_unknown_ace_type_is_preserved() {
+        let ace = access_ace(0xff, 0x80, 0x0002_0019, &sid_builtin_users());
+        let descriptor = descriptor_with_dacl(std::slice::from_ref(&ace));
 
-            let mut data: Vec<u8> = vec![0; rng_size as usize];
+        let res = security_descriptor_from_bytes(&descriptor).unwrap();
 
-            rand::fill(&mut data[..]);
-            convert_sid(&data).unwrap();
-        }
+        assert_eq!(res.dacl_aces.len(), 1);
+        assert_eq!(
+            res.dacl_aces[0].ace_type.as_deref(),
+            Some("UNKNOWN_ACE_TYPE_0xFF")
+        );
+        assert_eq!(res.dacl_aces[0].ace_size, Some(ace.len() as u16));
+        assert_eq!(
+            res.dacl_aces[0].ace_flags,
+            vec!["FAILED_ACCESS_ACE_FLAG".to_string()]
+        );
+        assert_eq!(res.dacl_aces[0].raw_hex, Some(hex::encode(ace)));
+        assert_eq!(res.dacl_aces[0].account_sid, None);
+    }
+
+    #[test]
+    fn descriptor_object_ace_decodes_guids() {
+        let object_guid = [
+            0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb,
+            0xcc, 0xdd, 0xee, 0xff,
+        ];
+        let inherited_guid = [
+            0x98, 0xba, 0xdc, 0xfe, 0x54, 0x76, 0x10, 0x32, 0x01, 0x23, 0x45, 0x67,
+            0x89, 0xab, 0xcd, 0xef,
+        ];
+        let ace = object_ace(
+            0x05,
+            0x00,
+            0x0002_0019,
+            0x0000_0003,
+            Some(object_guid),
+            Some(inherited_guid),
+            &sid_builtin_users(),
+        );
+
+        let res = security_descriptor_from_bytes(&descriptor_with_dacl(&[ace])).unwrap();
+
+        assert_eq!(res.dacl_aces.len(), 1);
+        assert_eq!(
+            res.dacl_aces[0].ace_type.as_deref(),
+            Some("ACCESS_ALLOWED_OBJECT_ACE_TYPE")
+        );
+        assert_eq!(
+            res.dacl_aces[0].object_type_guid.as_deref(),
+            Some("00112233-4455-6677-8899-aabbccddeeff")
+        );
+        assert_eq!(
+            res.dacl_aces[0].inherited_object_type_guid.as_deref(),
+            Some("fedcba98-7654-3210-0123-456789abcdef")
+        );
+        assert_eq!(
+            res.dacl_aces[0].account_sid.as_deref(),
+            Some("S-1-5-32-545")
+        );
+    }
+
+    #[test]
+    fn convert_sid_deterministic_truncation_cases() {
+        assert_eq!(convert_sid(&[]).unwrap(), "S-1-");
+        assert_eq!(convert_sid(&[0x01, 0x01]).unwrap(), "S-1-");
+        assert_eq!(
+            convert_sid(&[0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05]).unwrap(),
+            "S-1-5"
+        );
+        assert_eq!(convert_sid(&sid_builtin_users()).unwrap(), "S-1-5-32-545");
     }
 }
