@@ -1314,8 +1314,8 @@ class SecurityDescriptor:
         self.control_flags: List[str] = []
         self.owner_sid: str = ""
         self.group_sid: str = ""
-        self.sacl_ace: Optional["SecurityDescriptorAce"] = None
-        self.dacl_ace: Optional["SecurityDescriptorAce"] = None
+        self.sacl_aces: List["SecurityDescriptorAce"] = []
+        self.dacl_aces: List["SecurityDescriptorAce"] = []
 
     def to_record(self) -> Record:
         """Converts the SecurityDescriptor to a Record containing its attributes."""
@@ -1328,7 +1328,11 @@ class SecurityDescriptorAce:
         self.ace_type: Optional[str] = None
         self.ace_flags: List[str] = []
         self.rights: Optional[List[str]] = None
-        self.account_sid: str = ""
+        self.account_sid: Optional[str] = None
+        self.ace_size: Optional[int] = None
+        self.object_type_guid: Optional[str] = None
+        self.inherited_object_type_guid: Optional[str] = None
+        self.raw_hex: Optional[str] = None
 
     def to_record(self) -> Record:
         """Converts the SecurityDescriptorAce to a Record containing its attributes."""

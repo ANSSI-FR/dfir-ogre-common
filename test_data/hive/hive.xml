@@ -42,24 +42,38 @@
         <array>
           <field input="control_flags" parser="String" />
         </array>
-        <object input="sacl_ace" ignore="false">
-          <field input="ace_type" parser="String" />
-          <field input="ace_flags" parser="String" />
-          <array>
-            <field input="rights" parser="String" />
-          </array>
-          <field input="account_sid" parser="String" />
-        </object>
-        <object input="dacl_ace" ignore="false">
-          <field input="ace_type" parser="String" />
-          <array>
-            <field input="ace_flags" parser="String" />
-          </array>
-          <array>
-            <field input="rights" parser="String" />
-          </array>
-          <field input="account_sid" parser="String" />
-        </object>
+        <array>
+          <object input="sacl_aces" ignore="false">
+            <field input="ace_type" parser="String" />
+            <array>
+              <field input="ace_flags" parser="String" />
+            </array>
+            <array>
+              <field input="rights" parser="String" />
+            </array>
+            <field input="account_sid" parser="String" />
+            <field input="ace_size" parser="Int" />
+            <field input="object_type_guid" parser="String" />
+            <field input="inherited_object_type_guid" parser="String" />
+            <field input="raw_hex" parser="String" />
+          </object>
+        </array>
+        <array>
+          <object input="dacl_aces" ignore="false">
+            <field input="ace_type" parser="String" />
+            <array>
+              <field input="ace_flags" parser="String" />
+            </array>
+            <array>
+              <field input="rights" parser="String" />
+            </array>
+            <field input="account_sid" parser="String" />
+            <field input="ace_size" parser="Int" />
+            <field input="object_type_guid" parser="String" />
+            <field input="inherited_object_type_guid" parser="String" />
+            <field input="raw_hex" parser="String" />
+          </object>
+        </array>
       </object>
 
     </fields>
