@@ -1,7 +1,8 @@
 use std::{fs::OpenOptions, io::Write, path::Path, sync::Arc};
 
 use crate::{
-    Error, FieldMapping, FileReport, Metadata, Record, Value, date_util::DateOutputCodec,
+    Error, FieldMapping, FileReport, Metadata, Record, Value,
+    date_util::DateOutputCodec,
     line_builder::{LineBuilder, OUPUT_DATA_ID, OUTPUT_METADATA_FIELD, OUTPUT_METADATA_ID_FIELD},
     metadata::MetadataSerialized,
     output::OutputType,
@@ -521,8 +522,9 @@ mod tests {
     fn serialise_record_with_extra_field_does_not_mutate_record() {
         let mut record = Record::new();
         record.add("greetings", Value::String("Hello".to_owned()));
-        let metadata =
-            MetadataSerialized(Arc::new("{\"computer\":\"test\",\"data_type\":\"\"}".to_owned()));
+        let metadata = MetadataSerialized(Arc::new(
+            "{\"computer\":\"test\",\"data_type\":\"\"}".to_owned(),
+        ));
         let mut buffer = String::new();
 
         csv_serialise_record_with_extra_field(

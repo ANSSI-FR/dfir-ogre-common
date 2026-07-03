@@ -2,7 +2,8 @@ use blake3::Hasher;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    DateOutputCodec, Error, Record, metadata::MetadataSerialized,
+    DateOutputCodec, Error, Record,
+    metadata::MetadataSerialized,
     serialise::{JsonArrayWriter, JsonObjectWriter},
     serialize_date,
 };

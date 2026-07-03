@@ -12,8 +12,10 @@ use chrono::{DateTime, Utc};
 use pyo3::prelude::*;
 
 use crate::{
-    DateOutputCodec, escape_special_chars, format_csv::CSV_DELIMITER, serialize_date,
+    DateOutputCodec, escape_special_chars,
+    format_csv::CSV_DELIMITER,
     serialise::{CsvRowWriter, JsonObjectWriter},
+    serialize_date,
 };
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -171,13 +173,27 @@ impl Metadata {
         Self::serialise_json_string(&mut object, "archive_filename", &self.archive_filename);
         Self::serialise_json_string(&mut object, "original_filename", &self.original_filename);
         Self::serialise_json_string(&mut object, "vss", &self.vss);
-        Self::serialise_json_date(&mut object, "orc_start_date", &self.orc_start_date, date_codec);
-        Self::serialise_json_date(&mut object, "creation_date", &self.creation_date, date_codec);
+        Self::serialise_json_date(
+            &mut object,
+            "orc_start_date",
+            &self.orc_start_date,
+            date_codec,
+        );
+        Self::serialise_json_date(
+            &mut object,
+            "creation_date",
+            &self.creation_date,
+            date_codec,
+        );
         Self::serialise_json_date(&mut object, "modif_date", &self.modif_date, date_codec);
         object.finish();
     }
 
-    fn serialise_json_string(object: &mut JsonObjectWriter<'_>, name: &str, value: &Option<String>) {
+    fn serialise_json_string(
+        object: &mut JsonObjectWriter<'_>,
+        name: &str,
+        value: &Option<String>,
+    ) {
         object.field_if(name, value.is_some(), |buffer| {
             buffer.push('\"');
             buffer.push_str(&escape_special_chars(value.as_deref().unwrap_or_default()));

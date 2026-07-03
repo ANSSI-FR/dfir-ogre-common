@@ -11,8 +11,12 @@ use indexmap::IndexMap;
 use pyo3::prelude::*;
 
 use crate::{
-    FieldName, Record, Value, date_util::DateOutputCodec, errors::Error, escape_special_chars,
-    format_csv::CSV_DELIMITER, metadata::MetadataSerialized,
+    FieldName, Record, Value,
+    date_util::DateOutputCodec,
+    errors::Error,
+    escape_special_chars,
+    format_csv::CSV_DELIMITER,
+    metadata::MetadataSerialized,
     serialise::{CsvRowWriter, JsonObjectWriter},
     serialize_date,
 };
@@ -153,7 +157,12 @@ impl TimeLine {
             row.quoted_field(self.metadata_id.as_deref().unwrap_or_default());
             row.quoted_field(self.data_id.as_deref().unwrap_or_default());
         } else {
-            row.quoted_field(self.metadata.as_ref().map(|m| m.0.as_str()).unwrap_or_default());
+            row.quoted_field(
+                self.metadata
+                    .as_ref()
+                    .map(|m| m.0.as_str())
+                    .unwrap_or_default(),
+            );
             if let Some(data) = &self.data {
                 let mut object_buffer = String::new();
                 data.json_serialise(&mut object_buffer, date_codec, include_empty)?;
@@ -196,7 +205,6 @@ impl TimeLine {
             buffer.push_str("data");
         }
     }
-
 }
 
 ///
@@ -859,9 +867,8 @@ impl TimeLineBuilder {
 mod tests {
 
     use crate::{
-        DateInputCodec, FieldMapping, Metadata, Parser, Record, Value,
-        date_util::DateOutputCodec, field::Field, line_builder::LineBuilder,
-        metadata::MetadataSerialized,
+        DateInputCodec, FieldMapping, Metadata, Parser, Record, Value, date_util::DateOutputCodec,
+        field::Field, line_builder::LineBuilder, metadata::MetadataSerialized,
     };
     use std::sync::Arc;
 
