@@ -13,8 +13,8 @@ pub struct SecurityDescriptor {
     control_flags: Vec<String>,
     owner_sid: String,
     group_sid: String,
-    sacl_ace: Option<SecurityDescriptorAce>,
-    dacl_ace: Option<SecurityDescriptorAce>,
+    sacl_aces: Vec<SecurityDescriptorAce>,
+    dacl_aces: Vec<SecurityDescriptorAce>,
 }
 #[pymethods]
 impl SecurityDescriptor {
@@ -29,13 +29,19 @@ impl SecurityDescriptor {
             .collect();
         record.add("control_flags", Value::Array(flags));
 
-        if let Some(ace) = &self.sacl_ace {
-            record.add("sacl_ace", Value::Object(ace.to_record()));
-        }
+        let sacl_aces = self
+            .sacl_aces
+            .iter()
+            .map(|ace| Value::Object(ace.to_record()))
+            .collect();
+        record.add("sacl_aces", Value::Array(sacl_aces));
 
-        if let Some(ace) = &self.dacl_ace {
-            record.add("dacl_ace", Value::Object(ace.to_record()));
-        }
+        let dacl_aces = self
+            .dacl_aces
+            .iter()
+            .map(|ace| Value::Object(ace.to_record()))
+            .collect();
+        record.add("dacl_aces", Value::Array(dacl_aces));
 
         record
     }
@@ -47,7 +53,11 @@ pub struct SecurityDescriptorAce {
     ace_type: Option<String>,
     ace_flags: Vec<String>,
     rights: Option<Vec<String>>,
-    account_sid: String,
+    account_sid: Option<String>,
+    ace_size: Option<u16>,
+    object_type_guid: Option<String>,
+    inherited_object_type_guid: Option<String>,
+    raw_hex: Option<String>,
 }
 impl SecurityDescriptorAce {
     pub fn to_record(&self) -> Record {
@@ -55,7 +65,9 @@ impl SecurityDescriptorAce {
         if let Some(ace_type) = &self.ace_type {
             record.add("ace_type", Value::String(ace_type.clone()));
         }
-        record.add("account_sid", Value::String(self.account_sid.clone()));
+        if let Some(account_sid) = &self.account_sid {
+            record.add("account_sid", Value::String(account_sid.clone()));
+        }
         let flags: Vec<Value> = self
             .ace_flags
             .iter()
@@ -69,6 +81,21 @@ impl SecurityDescriptorAce {
                 .map(|flag| Value::String(flag.to_string()))
                 .collect();
             record.add("rights", Value::Array(rights));
+        }
+        if let Some(ace_size) = self.ace_size {
+            record.add("ace_size", Value::Int(i64::from(ace_size)));
+        }
+        if let Some(object_type_guid) = &self.object_type_guid {
+            record.add("object_type_guid", Value::String(object_type_guid.clone()));
+        }
+        if let Some(inherited_object_type_guid) = &self.inherited_object_type_guid {
+            record.add(
+                "inherited_object_type_guid",
+                Value::String(inherited_object_type_guid.clone()),
+            );
+        }
+        if let Some(raw_hex) = &self.raw_hex {
+            record.add("raw_hex", Value::String(raw_hex.clone()));
         }
 
         record
@@ -199,7 +226,7 @@ pub fn security_descriptor_from_bytes(b: &[u8]) -> Result<SecurityDescriptor, Er
             c_offset += ace_size
         }
         let ace = ace_from_bytes(&sacl_ace)?;
-        descriptor.sacl_ace = Some(ace);
+        descriptor.sacl_aces.push(ace);
     }
     //dacl
     if control_flags.contains("SE_DACL_PRESENT") {
@@ -247,7 +274,7 @@ pub fn security_descriptor_from_bytes(b: &[u8]) -> Result<SecurityDescriptor, Er
             c_offset += ace_size
         }
         let ace = ace_from_bytes(&dacl_ace)?;
-        descriptor.dacl_ace = Some(ace);
+        descriptor.dacl_aces.push(ace);
     }
 
     Ok(descriptor)
@@ -306,7 +333,7 @@ fn ace_from_bytes(ace_b: &[u8]) -> Result<SecurityDescriptorAce, Error> {
         }
         let account_sid = convert_sid(&ace_b[start..stop])?;
 
-        sec_ace.account_sid = account_sid;
+        sec_ace.account_sid = Some(account_sid);
     } else {
         //let object_type = u32::from_le_bytes(ace_b[4..8].try_into().unwrap());
         // let mut index = 8;
@@ -338,7 +365,7 @@ fn ace_from_bytes(ace_b: &[u8]) -> Result<SecurityDescriptorAce, Error> {
             return Ok(sec_ace);
         }
         let account_sid = convert_sid(&ace_b[start..stop])?;
-        sec_ace.account_sid = account_sid;
+        sec_ace.account_sid = Some(account_sid);
     }
 
     Ok(sec_ace)
@@ -636,6 +663,100 @@ mod tests {
 
     use super::*;
 
+    fn sid_builtin_admins() -> Vec<u8> {
+        vec![
+            0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20,
+            0x02, 0x00, 0x00,
+        ]
+    }
+
+    fn sid_builtin_users() -> Vec<u8> {
+        vec![
+            0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x21,
+            0x02, 0x00, 0x00,
+        ]
+    }
+
+    fn sid_everyone() -> Vec<u8> {
+        vec![
+            0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+        ]
+    }
+
+    fn access_ace(ace_type: u8, ace_flags: u8, rights: u32, sid: &[u8]) -> Vec<u8> {
+        let ace_size = 8 + sid.len();
+        let mut ace = vec![ace_type, ace_flags];
+        ace.extend_from_slice(&(ace_size as u16).to_le_bytes());
+        ace.extend_from_slice(&rights.to_le_bytes());
+        ace.extend_from_slice(sid);
+        ace
+    }
+
+    fn object_ace(
+        ace_type: u8,
+        ace_flags: u8,
+        rights: u32,
+        object_flags: u32,
+        object_guid: Option<[u8; 16]>,
+        inherited_guid: Option<[u8; 16]>,
+        sid: &[u8],
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&rights.to_le_bytes());
+        body.extend_from_slice(&object_flags.to_le_bytes());
+        if let Some(guid) = object_guid {
+            body.extend_from_slice(&guid);
+        }
+        if let Some(guid) = inherited_guid {
+            body.extend_from_slice(&guid);
+        }
+        body.extend_from_slice(sid);
+
+        let ace_size = 4 + body.len();
+        let mut ace = vec![ace_type, ace_flags];
+        ace.extend_from_slice(&(ace_size as u16).to_le_bytes());
+        ace.extend_from_slice(&body);
+        ace
+    }
+
+    fn acl_with_aces(aces: &[Vec<u8>]) -> Vec<u8> {
+        let acl_size = 8 + aces.iter().map(Vec::len).sum::<usize>();
+        let mut acl = vec![0x02, 0x00];
+        acl.extend_from_slice(&(acl_size as u16).to_le_bytes());
+        acl.extend_from_slice(&(aces.len() as u16).to_le_bytes());
+        acl.extend_from_slice(&0u16.to_le_bytes());
+        for ace in aces {
+            acl.extend_from_slice(ace);
+        }
+        acl
+    }
+
+    fn descriptor_with_dacl(aces: &[Vec<u8>]) -> Vec<u8> {
+        descriptor_with_raw_dacl(acl_with_aces(aces))
+    }
+
+    fn descriptor_with_raw_dacl(dacl: Vec<u8>) -> Vec<u8> {
+        let owner = sid_builtin_admins();
+        let group = sid_everyone();
+        let owner_offset = 20u32;
+        let group_offset = owner_offset + owner.len() as u32;
+        let dacl_offset = group_offset + group.len() as u32;
+
+        let mut body = vec![0x01, 0x00];
+        body.extend_from_slice(&0x8004u16.to_le_bytes());
+        body.extend_from_slice(&owner_offset.to_le_bytes());
+        body.extend_from_slice(&group_offset.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&dacl_offset.to_le_bytes());
+        body.extend_from_slice(&owner);
+        body.extend_from_slice(&group);
+        body.extend_from_slice(&dacl);
+
+        let mut descriptor = (body.len() as u32).to_le_bytes().to_vec();
+        descriptor.extend_from_slice(&body);
+        descriptor
+    }
+
     #[test]
     fn descriptor() {
         let security_descriptor = "0801000001000488dc000000ec00000000000000140000000200c80007000000000218001900020001020000000000052000000021020000000218003f000f0001020000000000052000000020020000000214003f000f00010100000000000512000000000018003f000f0001020000000000052000000020020000001a14003f000f000101000000000003000000000002180019000200010200000000000f02000000010000000002380019000200010a00000000000f0300000000040000b031803f6cbc634c3ce050d1970ca1620f01cb197e7aa6c0fae697f119a30cce010200000000000520000000200200000105000000000005150000006441f6999e6ec4c34d2890de01020000";
@@ -649,13 +770,61 @@ mod tests {
             "S-1-5-21-2583052644-3284430494-3733989453-513"
         );
 
-        let dacl_ace = &res.dacl_ace.unwrap();
+        let dacl_ace = &res.dacl_aces[0];
 
-        assert_eq!(dacl_ace.account_sid, "S-1-5-32-545");
+        assert_eq!(dacl_ace.account_sid.as_deref(), Some("S-1-5-32-545"));
         assert_eq!(
             dacl_ace.ace_type.as_ref().unwrap(),
             "ACCESS_ALLOWED_ACE_TYPE"
         );
+    }
+
+    #[test]
+    fn descriptor_decodes_multiple_dacl_aces() {
+        let ace1 = access_ace(0x00, 0x00, 0x0002_0019, &sid_builtin_users());
+        let ace2 = access_ace(0x01, 0x02, 0x0002_0006, &sid_builtin_admins());
+        let descriptor = descriptor_with_dacl(&[ace1, ace2]);
+
+        let res = security_descriptor_from_bytes(&descriptor).unwrap();
+
+        assert_eq!(res.owner_sid, "S-1-5-32-544");
+        assert_eq!(res.group_sid, "S-1-1-0");
+        assert_eq!(res.dacl_aces.len(), 2);
+        assert_eq!(
+            res.dacl_aces[0].ace_type.as_deref(),
+            Some("ACCESS_ALLOWED_ACE_TYPE")
+        );
+        assert_eq!(
+            res.dacl_aces[0].account_sid.as_deref(),
+            Some("S-1-5-32-545")
+        );
+        assert_eq!(
+            res.dacl_aces[1].ace_type.as_deref(),
+            Some("ACCESS_DENIED_ACE_TYPE")
+        );
+        assert_eq!(
+            res.dacl_aces[1].ace_flags,
+            vec!["CONTAINER_INHERIT_ACE".to_string()]
+        );
+        assert_eq!(
+            res.dacl_aces[1].account_sid.as_deref(),
+            Some("S-1-5-32-544")
+        );
+    }
+
+    #[test]
+    fn descriptor_to_record_emits_ace_arrays() {
+        let ace = access_ace(0x00, 0x00, 0x0002_0019, &sid_builtin_users());
+        let descriptor = descriptor_with_dacl(&[ace]);
+
+        let record = security_descriptor_from_bytes(&descriptor).unwrap().to_record();
+
+        assert!(
+            matches!(record.get("sacl_aces"), Some(Value::Array(values)) if values.is_empty())
+        );
+        assert!(matches!(record.get("dacl_aces"), Some(Value::Array(values)) if values.len() == 1));
+        assert!(record.get("sacl_ace").is_none());
+        assert!(record.get("dacl_ace").is_none());
     }
 
     #[test]
