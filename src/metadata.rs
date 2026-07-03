@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 
 use crate::{
     DateOutputCodec, escape_special_chars, format_csv::CSV_DELIMITER, serialize_date,
-    value::escape_special_chars_csv,
+    serialise::{CsvRowWriter, JsonObjectWriter},
 };
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -123,90 +123,79 @@ impl Metadata {
     }
 
     pub fn csv_serialise(&self, buffer: &mut String, date_codec: &DateOutputCodec) {
-        buffer.push_str(&self.computer);
-        buffer.push(CSV_DELIMITER);
-        buffer.push_str(&self.data_type);
-        Self::serialise_csv_string(&self.id, buffer);
-        Self::serialise_csv_string(&self.orc_id, buffer);
-        Self::serialise_csv_string(&self.folder, buffer);
-        Self::serialise_csv_string(&self.archive, buffer);
-        Self::serialise_csv_string(&self.subarchive, buffer);
-        Self::serialise_csv_string(&self.archive_filename, buffer);
-        Self::serialise_csv_string(&self.original_filename, buffer);
-        Self::serialise_csv_string(&self.vss, buffer);
-        Self::serialise_csv_date(&self.orc_start_date, date_codec, buffer);
-        Self::serialise_csv_date(&self.creation_date, date_codec, buffer);
-        Self::serialise_csv_date(&self.modif_date, date_codec, buffer);
-    }
-
-    fn serialise_csv_string(value: &Option<String>, buffer: &mut String) {
-        buffer.push(CSV_DELIMITER);
-        if let Some(value) = value {
-            buffer.push('\"');
-            buffer.push_str(&escape_special_chars_csv(value));
-            buffer.push('\"');
-        }
+        let mut row = CsvRowWriter::new(buffer);
+        row.quoted_field(&self.computer);
+        row.quoted_field(&self.data_type);
+        row.optional_quoted_field(self.id.as_deref());
+        row.optional_quoted_field(self.orc_id.as_deref());
+        row.optional_quoted_field(self.folder.as_deref());
+        row.optional_quoted_field(self.archive.as_deref());
+        row.optional_quoted_field(self.subarchive.as_deref());
+        row.optional_quoted_field(self.archive_filename.as_deref());
+        row.optional_quoted_field(self.original_filename.as_deref());
+        row.optional_quoted_field(self.vss.as_deref());
+        Self::serialise_csv_date(&mut row, &self.orc_start_date, date_codec);
+        Self::serialise_csv_date(&mut row, &self.creation_date, date_codec);
+        Self::serialise_csv_date(&mut row, &self.modif_date, date_codec);
     }
 
     fn serialise_csv_date(
+        row: &mut CsvRowWriter<'_>,
         date: &Option<DateTime<Utc>>,
         date_codec: &DateOutputCodec,
-        buffer: &mut String,
     ) {
-        buffer.push(CSV_DELIMITER);
         if let Some(date) = date {
-            buffer.push('\"');
-            buffer.push_str(&serialize_date(date, date_codec));
-            buffer.push('\"');
+            row.quoted_field(&serialize_date(date, date_codec));
+        } else {
+            row.empty_field();
         }
     }
 
     pub fn json_serialise(&self, buffer: &mut String, date_codec: &DateOutputCodec) {
-        buffer.push('{');
-        buffer.push_str("\"computer\":\"");
-        buffer.push_str(&self.computer);
-        buffer.push('\"');
-        buffer.push_str(",\"data_type\":\"");
-        buffer.push_str(&self.data_type);
-        buffer.push('\"');
-
-        Self::serialise_json_string("id", &self.id, buffer);
-        Self::serialise_json_string("orc_id", &self.orc_id, buffer);
-        Self::serialise_json_string("folder", &self.folder, buffer);
-        Self::serialise_json_string("archive", &self.archive, buffer);
-        Self::serialise_json_string("subarchive", &self.subarchive, buffer);
-        Self::serialise_json_string("archive_filename", &self.archive_filename, buffer);
-        Self::serialise_json_string("original_filename", &self.original_filename, buffer);
-        Self::serialise_json_string("vss", &self.vss, buffer);
-        Self::serialise_json_date("orc_start_date", &self.orc_start_date, date_codec, buffer);
-        Self::serialise_json_date("creation_date", &self.creation_date, date_codec, buffer);
-        Self::serialise_json_date("modif_date", &self.modif_date, date_codec, buffer);
-        buffer.push('}');
+        let mut object = JsonObjectWriter::new(buffer);
+        object.field_raw("computer", |buffer| {
+            buffer.push('\"');
+            buffer.push_str(&escape_special_chars(&self.computer));
+            buffer.push('\"');
+        });
+        object.field_raw("data_type", |buffer| {
+            buffer.push('\"');
+            buffer.push_str(&escape_special_chars(&self.data_type));
+            buffer.push('\"');
+        });
+        Self::serialise_json_string(&mut object, "id", &self.id);
+        Self::serialise_json_string(&mut object, "orc_id", &self.orc_id);
+        Self::serialise_json_string(&mut object, "folder", &self.folder);
+        Self::serialise_json_string(&mut object, "archive", &self.archive);
+        Self::serialise_json_string(&mut object, "subarchive", &self.subarchive);
+        Self::serialise_json_string(&mut object, "archive_filename", &self.archive_filename);
+        Self::serialise_json_string(&mut object, "original_filename", &self.original_filename);
+        Self::serialise_json_string(&mut object, "vss", &self.vss);
+        Self::serialise_json_date(&mut object, "orc_start_date", &self.orc_start_date, date_codec);
+        Self::serialise_json_date(&mut object, "creation_date", &self.creation_date, date_codec);
+        Self::serialise_json_date(&mut object, "modif_date", &self.modif_date, date_codec);
+        object.finish();
     }
 
-    fn serialise_json_string(name: &str, value: &Option<String>, buffer: &mut String) {
-        if let Some(value) = value {
-            buffer.push_str(",\"");
-            buffer.push_str(name);
-            buffer.push_str("\":\"");
-            buffer.push_str(&escape_special_chars(value));
+    fn serialise_json_string(object: &mut JsonObjectWriter<'_>, name: &str, value: &Option<String>) {
+        object.field_if(name, value.is_some(), |buffer| {
             buffer.push('\"');
-        }
+            buffer.push_str(&escape_special_chars(value.as_deref().unwrap_or_default()));
+            buffer.push('\"');
+        });
     }
 
     fn serialise_json_date(
+        object: &mut JsonObjectWriter<'_>,
         name: &str,
         date: &Option<DateTime<Utc>>,
         date_codec: &DateOutputCodec,
-        buffer: &mut String,
     ) {
-        if let Some(date) = date {
-            buffer.push_str(",\"");
-            buffer.push_str(name);
-            buffer.push_str("\":\"");
-            buffer.push_str(&serialize_date(date, date_codec));
+        object.field_if(name, date.is_some(), |buffer| {
             buffer.push('\"');
-        }
+            buffer.push_str(&serialize_date(date.as_ref().unwrap(), date_codec));
+            buffer.push('\"');
+        });
     }
 }
 #[cfg(test)]
