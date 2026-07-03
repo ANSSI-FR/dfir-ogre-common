@@ -69,21 +69,24 @@ fn slice_at(bytes: &[u8], offset: usize, len: usize) -> Option<&[u8]> {
 fn decode_u16_flags(bits: u16, table: &[(u16, &str)]) -> Vec<String> {
     table
         .iter()
-        .filter_map(|(mask, value)| (bits & mask != 0).then(|| (*value).to_string()))
+        .filter(|(mask, _)| bits & mask != 0)
+        .map(|(_, value)| (*value).to_string())
         .collect()
 }
 
 fn decode_u8_flags(bits: u8, table: &[(u8, &str)]) -> Vec<String> {
     table
         .iter()
-        .filter_map(|(mask, value)| (bits & mask != 0).then(|| (*value).to_string()))
+        .filter(|(mask, _)| bits & mask != 0)
+        .map(|(_, value)| (*value).to_string())
         .collect()
 }
 
 fn decode_u32_flags(bits: u32, table: &[(u32, &str)]) -> Vec<String> {
     table
         .iter()
-        .filter_map(|(mask, value)| (bits & mask != 0).then(|| (*value).to_string()))
+        .filter(|(mask, _)| bits & mask != 0)
+        .map(|(_, value)| (*value).to_string())
         .collect()
 }
 
