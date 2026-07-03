@@ -104,13 +104,6 @@ impl<'a> CsvRowWriter<'a> {
         self.buffer.push('"');
     }
 
-    pub(crate) fn pre_escaped_quoted_field(&mut self, value: &str) {
-        self.write_delimiter();
-        self.buffer.push('"');
-        self.buffer.push_str(value);
-        self.buffer.push('"');
-    }
-
     pub(crate) fn optional_quoted_field(&mut self, value: Option<&str>) {
         match value {
             Some(value) => self.quoted_field(value),

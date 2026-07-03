@@ -6,6 +6,7 @@ use crate::{
     metadata::MetadataSerialized,
     output::OutputType,
     output_writer::{FileWriter, GzipWriter, Writer},
+    serialise::JsonObjectWriter,
 };
 
 enum JsonExtraField<'a> {
@@ -34,29 +35,19 @@ fn json_serialise_record_with_extra_field(
     date_codec: &DateOutputCodec,
     include_empty: bool,
 ) -> Result<(), Error> {
-    buffer.push('{');
-    let mut pos = 0;
+    let mut object = JsonObjectWriter::new(buffer);
     for (key, value) in record.iter() {
-        if !include_empty && let Value::Null() = value {
-            continue;
+        let should_emit = include_empty || !matches!(value, Value::Null());
+        let mut value_buffer = String::new();
+        if should_emit {
+            Value::json_serialise_value(value, &mut value_buffer, date_codec, include_empty)?;
         }
-        if pos != 0 {
-            buffer.push(',');
-        }
-        buffer.push('\"');
-        buffer.push_str(&escape_special_chars(key));
-        buffer.push_str("\":");
-        Value::json_serialise_value(value, buffer, date_codec, include_empty)?;
-        pos += 1;
+        object.field_if(key, should_emit, |buffer| {
+            buffer.push_str(&value_buffer);
+        });
     }
-    if pos != 0 {
-        buffer.push(',');
-    }
-    buffer.push('\"');
-    buffer.push_str(&escape_special_chars(extra_key));
-    buffer.push_str("\":");
-    extra_value.json_serialise(buffer);
-    buffer.push('}');
+    object.field_raw(extra_key, |buffer| extra_value.json_serialise(buffer));
+    object.finish();
     Ok(())
 }
 

@@ -1,14 +1,13 @@
 use std::{fs::OpenOptions, io::Write, path::Path, sync::Arc};
 
 use crate::{
-    Error, FieldMapping, FileReport, Metadata, Record, Value,
-    date_util::DateOutputCodec,
+    Error, FieldMapping, FileReport, Metadata, Record, Value, date_util::DateOutputCodec,
     line_builder::{LineBuilder, OUPUT_DATA_ID, OUTPUT_METADATA_FIELD, OUTPUT_METADATA_ID_FIELD},
     metadata::MetadataSerialized,
     output::OutputType,
     output_writer::{FileWriter, GzipWriter, Writer},
+    serialise::CsvRowWriter,
     timeline::TimeLine,
-    value::escape_special_chars_csv,
 };
 pub const CSV_DELIMITER: char = ';';
 
@@ -18,13 +17,11 @@ enum CsvExtraField<'a> {
 }
 
 impl CsvExtraField<'_> {
-    fn csv_serialise(&self, buffer: &mut String) {
-        buffer.push('\"');
+    fn write_to_row(&self, row: &mut CsvRowWriter<'_>) {
         match self {
-            Self::Metadata(metadata) => buffer.push_str(metadata.0.as_str()),
-            Self::String(value) => buffer.push_str(&escape_special_chars_csv(value)),
+            Self::Metadata(metadata) => row.quoted_field(metadata.0.as_str()),
+            Self::String(value) => row.quoted_field(value),
         }
-        buffer.push('\"');
     }
 }
 
@@ -34,11 +31,13 @@ fn csv_serialise_record_with_extra_field(
     buffer: &mut String,
     date_codec: &DateOutputCodec,
 ) -> Result<(), Error> {
-    Value::csv_serialise_record(record, buffer, date_codec, CSV_DELIMITER)?;
-    if !record.is_empty() {
-        buffer.push(CSV_DELIMITER);
+    let mut row = CsvRowWriter::new(buffer);
+    for (_, value) in record.iter() {
+        let mut field = String::new();
+        Value::csv_serialise_value(value, &mut field, date_codec)?;
+        row.raw_field(&field);
     }
-    extra_value.csv_serialise(buffer);
+    extra_value.write_to_row(&mut row);
     Ok(())
 }
 
@@ -196,8 +195,7 @@ impl CsvFormatter {
         } else {
             let mut buffer = String::new();
             metadata.json_serialise(&mut buffer, &self.output_date_codec);
-            let escaped = escape_special_chars_csv(&buffer);
-            let serialized = MetadataSerialized(Arc::new(escaped));
+            let serialized = MetadataSerialized(Arc::new(buffer));
             self.metadata_serialized = Some(serialized.clone());
             serialized
         }
@@ -512,7 +510,7 @@ mod tests {
         assert!(std::sync::Arc::ptr_eq(&first.0, &second.0));
         assert_eq!(
             first.0.as_ref(),
-            "{\"\"computer\"\":\"\"host-a\"\",\"\"data_type\"\":\"\"evtx\"\"}"
+            "{\"computer\":\"host-a\",\"data_type\":\"evtx\"}"
         );
 
         drop(output);
@@ -523,9 +521,8 @@ mod tests {
     fn serialise_record_with_extra_field_does_not_mutate_record() {
         let mut record = Record::new();
         record.add("greetings", Value::String("Hello".to_owned()));
-        let metadata = MetadataSerialized(Arc::new(
-            "{\"\"computer\"\":\"\"test\"\",\"\"data_type\"\":\"\"\"\"}".to_owned(),
-        ));
+        let metadata =
+            MetadataSerialized(Arc::new("{\"computer\":\"test\",\"data_type\":\"\"}".to_owned()));
         let mut buffer = String::new();
 
         csv_serialise_record_with_extra_field(
@@ -536,10 +533,13 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            "\"Hello\";\"{\"\"computer\"\":\"\"test\"\",\"\"data_type\"\":\"\"\"\"}\"",
-            buffer
-        );
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(Box::new(buffer.as_bytes()));
+        let parsed = reader.records().next().unwrap().unwrap();
+        assert_eq!(&parsed[0], "Hello");
+        assert_eq!(&parsed[1], "{\"computer\":\"test\",\"data_type\":\"\"}");
         assert!(!record.contains_key(OUTPUT_METADATA_FIELD));
     }
 
