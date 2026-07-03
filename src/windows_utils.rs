@@ -1,9 +1,6 @@
 use chrono::{DateTime, Utc};
 use pyo3::prelude::*;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::LazyLock,
-};
+use std::{collections::HashMap, sync::LazyLock};
 
 use crate::{Error, Record, Value, date_util::filetime_to_datetime};
 
@@ -203,6 +200,40 @@ fn ace_type_name(ace_type: u8) -> String {
     )
 }
 
+fn is_known_ace_type(ace_type: u8) -> bool {
+    ACE_BTYPE.contains_key(&ace_type)
+}
+
+fn is_object_ace_type(ace_type: u8) -> bool {
+    matches!(
+        ace_type,
+        0x05 | 0x06 | 0x07 | 0x08 | 0x0b | 0x0c | 0x0f | 0x10
+    )
+}
+
+fn format_guid_le(bytes: &[u8]) -> Option<String> {
+    let guid = slice_at(bytes, 0, 16)?;
+    Some(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        guid[3],
+        guid[2],
+        guid[1],
+        guid[0],
+        guid[5],
+        guid[4],
+        guid[7],
+        guid[6],
+        guid[8],
+        guid[9],
+        guid[10],
+        guid[11],
+        guid[12],
+        guid[13],
+        guid[14],
+        guid[15]
+    ))
+}
+
 fn acl_at(bytes: &[u8], offset: usize) -> Result<Vec<SecurityDescriptorAce>, Error> {
     let Some(ace_count) = read_u16_le(bytes, offset + 4) else {
         return Ok(vec![]);
@@ -300,91 +331,73 @@ pub fn security_descriptor_from_bytes(b: &[u8]) -> Result<SecurityDescriptor, Er
 }
 
 fn ace_from_bytes(ace_b: &[u8]) -> Result<SecurityDescriptorAce, Error> {
+    ace_from_bytes_with_declared_size(ace_b, read_u16_le(ace_b, 2))
+}
+
+fn ace_from_bytes_with_declared_size(
+    ace_b: &[u8],
+    declared_size: Option<u16>,
+) -> Result<SecurityDescriptorAce, Error> {
     let mut sec_ace = SecurityDescriptorAce {
+        ace_size: declared_size,
         ..Default::default()
     };
-    if ace_b.len() < 2 {
+
+    let Some(ace_type_byte) = ace_b.first().copied() else {
+        return Ok(sec_ace);
+    };
+
+    sec_ace.ace_type = Some(ace_type_name(ace_type_byte));
+    if let Some(ace_flags_b) = ace_b.get(1).copied() {
+        sec_ace.ace_flags = decode_u8_flags(ace_flags_b, ACE_BFLAGS_ORDERED);
+    }
+
+    if !is_known_ace_type(ace_type_byte) {
+        sec_ace.raw_hex = Some(hex::encode(ace_b));
         return Ok(sec_ace);
     }
-    let ace_type_opt = ACE_BTYPE.get(&ace_b[0]);
-    sec_ace.ace_type = ace_type_opt.map(|s| s.to_string());
 
-    let ace_flags_b = ace_b[1];
-
-    let mut ace_flags = HashSet::new();
-    for (key, value) in ACE_BFLAGS.iter() {
-        if key & ace_flags_b > 0 {
-            ace_flags.insert(value.to_owned());
+    let Some(rights_b) = read_u32_le(ace_b, 4) else {
+        if !ace_b.is_empty() {
+            sec_ace.raw_hex = Some(hex::encode(ace_b));
         }
-    }
+        return Ok(sec_ace);
+    };
+    sec_ace.rights = Some(decode_u32_flags(rights_b, BRIGHTS_ORDERED));
 
-    let flags: Vec<String> = ace_flags.iter().map(|flag| flag.to_string()).collect();
-    sec_ace.ace_flags = flags;
-
-    if let Some(ace_type) = ace_type_opt
-        && !ace_type.contains("OBJECT")
-    {
-        if ace_b.len() < 8 {
+    let sid_start = if is_object_ace_type(ace_type_byte) {
+        let Some(object_flags) = read_u32_le(ace_b, 8) else {
+            sec_ace.raw_hex = Some(hex::encode(ace_b));
             return Ok(sec_ace);
-        }
-        let rights_b = u32::from_le_bytes(
-            ace_b[4..8]
-                .try_into()
-                .map_err(|_| Error::InvalidByteLenght("ACE rights".into()))?,
-        );
+        };
 
-        let mut rights = vec![];
-        for (key, value) in BRIGHTS.iter() {
-            if key & rights_b > 0 {
-                rights.push(value.to_string());
-            }
+        let mut offset = 12usize;
+        if object_flags & 0x0000_0001 != 0 {
+            let Some(guid_bytes) = slice_at(ace_b, offset, 16) else {
+                sec_ace.raw_hex = Some(hex::encode(ace_b));
+                return Ok(sec_ace);
+            };
+            sec_ace.object_type_guid = format_guid_le(guid_bytes);
+            offset += 16;
         }
-        sec_ace.rights = Some(rights);
 
-        if ace_b.len() < 10 {
-            return Ok(sec_ace);
+        if object_flags & 0x0000_0002 != 0 {
+            let Some(guid_bytes) = slice_at(ace_b, offset, 16) else {
+                sec_ace.raw_hex = Some(hex::encode(ace_b));
+                return Ok(sec_ace);
+            };
+            sec_ace.inherited_object_type_guid = format_guid_le(guid_bytes);
+            offset += 16;
         }
-        let sid_size: usize = 8 + 4 * ace_b[8 + 1] as usize;
-        let start = 8;
-        let stop = start + sid_size;
-        if ace_b.len() < stop {
-            return Ok(sec_ace);
-        }
-        let account_sid = convert_sid(&ace_b[start..stop])?;
+        offset
+    } else {
+        8
+    };
 
+    if let Some(account_sid) = sid_at(ace_b, sid_start) {
         sec_ace.account_sid = Some(account_sid);
     } else {
-        //let object_type = u32::from_le_bytes(ace_b[4..8].try_into().unwrap());
-        // let mut index = 8;
-        //ACE_OBJECT_TYPE_PRESENT
-        // if object_type & 0x00000001 > 0 {
-        //     //TODO: need test data to check the format
-        //     // let object_guid = &ace_b[index..index + 8];
-        //     //  self.object_guid = ace_b[index : index + 8]
-        //     index += 8;
-        // }
-        //ACE_INHERITED_OBJECT_TYPE_PRESENT
-        // if object_type & 0x00000002 > 0 {
-        //     // self.inherit_object_guid = ace_b[index:index+8]
-        //     index += 8;
-        // }
-        // #TODO: need test data to check the format
-        // # self.inherit_object_guid = ace_b[index:index+8]
-
-        // # sid format : Revision number (1) + Number of sub authorities (1) + Authority (6) + nb*sub authorities (nb*4)
-
-        let start = 40;
-        if ace_b.len() < start + 1 {
-            return Ok(sec_ace);
-        }
-        let sid_size = 8 + 4 * ace_b[40] as usize;
-
-        let stop = start + sid_size;
-        if ace_b.len() < stop {
-            return Ok(sec_ace);
-        }
-        let account_sid = convert_sid(&ace_b[start..stop])?;
-        sec_ace.account_sid = Some(account_sid);
+        sec_ace.raw_hex = Some(hex::encode(ace_b));
     }
 
     Ok(sec_ace)
@@ -509,17 +522,6 @@ static _ACE_FLAGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new
     m
 });
 
-static ACE_BFLAGS: LazyLock<HashMap<u8, &'static str>> = LazyLock::new(|| {
-    let mut m: HashMap<u8, &'static str> = HashMap::new();
-    m.insert(0x01, "OBJECT_INHERIT_ACE"); // OBJECT_INHERIT_ACE
-    m.insert(0x02, "CONTAINER_INHERIT_ACE"); // CONTAINER_INHERIT_ACE
-    m.insert(0x04, "NO_PROPAGATE_INHERIT_ACE"); // NO_PROPAGATE_INHERIT_ACE
-    m.insert(0x08, "INHERIT_ONLY_ACE"); // INHERIT_ONLY_ACE
-    m.insert(0x40, "SUCCESSFUL_ACCESS_ACE_FLAG"); // SUCCESSFUL_ACCESS_ACE_FLAG
-    m.insert(0x80, "FAILED_ACCESS_ACE_FLAG"); // FAILED_ACCESS_ACE_FLAG
-    m
-});
-
 static _RIGHTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut m: HashMap<&'static str, &'static str> = HashMap::new();
     m.insert("GA", "GENERIC_ALL");
@@ -550,28 +552,6 @@ static _RIGHTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(||
     m.insert("NR", "SYSTEM_MANDATORY_LABEL_NO_READ_UP");
     m.insert("NW", "SYSTEM_MANDATORY_LABEL_NO_WRITE_UP");
     m.insert("NX", "SYSTEM_MANDATORY_LABEL_NO_EXECUTE_UP");
-    m
-});
-
-static BRIGHTS: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| {
-    let mut m: HashMap<u32, &'static str> = HashMap::new();
-    m.insert(0x000F003F, "KEY_ALL_ACCESS");
-    m.insert(0x00000020, "KEY_CREATE_LINK");
-    m.insert(0x00000004, "KEY_CREATE_SUB_KEY");
-    m.insert(0x00000008, "KEY_ENUMERATE_SUB_KEYS");
-    m.insert(0x00000010, "KEY_NOTIFY");
-    m.insert(0x00000001, "KEY_QUERY_VALUE");
-    m.insert(0x00020019, "KEY_READ");
-    m.insert(0x00000002, "KEY_SET_VALUE");
-    m.insert(0x00000200, "KEY_WOW64_32KEY");
-    m.insert(0x00000100, "KEY_WOW64_64KEY");
-    m.insert(0x00020006, "KEY_WRITE");
-    m.insert(0x01000000, "ACCESS_SYSTEM_SECURITY");
-    m.insert(0x02000000, "MAXIMUM_ALLOWED");
-    m.insert(0x10000000, "GENERIC_ALL");
-    m.insert(0x20000000, "GENERIC_EXECUTE");
-    m.insert(0x40000000, "GENERIC_WRITE");
-    m.insert(0x80000000, "GENERIC_READ");
     m
 });
 
@@ -653,25 +633,6 @@ static _DACL_FLAGS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::ne
     m.insert("AR", "SDDL_AUTO_INHERIT_REQ");
     m.insert("AI", "SDDL_AUTO_INHERITED");
     m.insert("NO_ACCESS_CONTROL", "SDDL_NULL_ACL");
-    m
-});
-
-static SD_BFLAGS: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| {
-    let mut m: HashMap<u32, &'static str> = HashMap::new();
-    m.insert(0x0001, "SE_OWNER_DEFAULTED");
-    m.insert(0x0002, "SE_GROUP_DEFAULTED");
-    m.insert(0x0004, "SE_DACL_PRESENT");
-    m.insert(0x0008, "SE_DACL_DEFAULTED");
-    m.insert(0x0010, "SE_SACL_PRESENT");
-    m.insert(0x0020, "SE_SACL_DEFAULTED");
-    m.insert(0x0100, "SE_DACL_AUTO_INHERIT_REQ");
-    m.insert(0x0200, "SE_SACL_AUTO_INHERIT_REQ");
-    m.insert(0x0400, "SE_DACL_AUTO_INHERITED");
-    m.insert(0x0800, "SE_SACL_AUTO_INHERITED");
-    m.insert(0x1000, "SE_DACL_PROTECTED");
-    m.insert(0x2000, "SE_SACL_PROTECTED");
-    m.insert(0x4000, "SE_RM_CONTROL_VALID");
-    m.insert(0x8000, "SE_SELF_RELATIVE");
     m
 });
 
