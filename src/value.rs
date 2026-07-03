@@ -366,6 +366,63 @@ mod tests {
         assert_eq!(parsed[key], "value");
     }
 
+    #[test]
+    fn json_serialise_array_omits_only_null_when_include_empty_is_false() {
+        let value = Value::Array(vec![Value::Null()]);
+
+        let mut buffer = String::new();
+        Value::json_serialise_value(&value, &mut buffer, &DateOutputCodec::Iso(), false).unwrap();
+
+        assert_eq!(buffer, "[]");
+    }
+
+    #[test]
+    fn json_serialise_array_omits_nulls_without_dangling_commas() {
+        let value = Value::Array(vec![
+            Value::Null(),
+            Value::String("a".to_owned()),
+            Value::Null(),
+            Value::String("b".to_owned()),
+            Value::Null(),
+        ]);
+
+        let mut buffer = String::new();
+        Value::json_serialise_value(&value, &mut buffer, &DateOutputCodec::Iso(), false).unwrap();
+
+        assert_eq!(buffer, r#"["a","b"]"#);
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed, serde_json::json!(["a", "b"]));
+    }
+
+    #[test]
+    fn json_serialise_nested_arrays_and_objects_with_skipped_nulls_parse() {
+        let mut object = Record::new();
+        object.add("kept", Value::String("value".to_owned()));
+        object.add("skipped", Value::Null());
+
+        let value = Value::Array(vec![
+            Value::Null(),
+            Value::Object(object),
+            Value::Array(vec![Value::Null(), Value::Int(7)]),
+        ]);
+
+        let mut buffer = String::new();
+        Value::json_serialise_value(&value, &mut buffer, &DateOutputCodec::Iso(), false).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed, serde_json::json!([{"kept": "value"}, [7]]));
+    }
+
+    #[test]
+    fn json_serialise_array_keeps_null_when_include_empty_is_true() {
+        let value = Value::Array(vec![Value::Null(), Value::String("a".to_owned())]);
+
+        let mut buffer = String::new();
+        Value::json_serialise_value(&value, &mut buffer, &DateOutputCodec::Iso(), true).unwrap();
+
+        assert_eq!(buffer, r#"[null,"a"]"#);
+    }
+
     // ---------------------------------------------------------------------
     // Tests for `Value::hash`
     // ---------------------------------------------------------------------
