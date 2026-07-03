@@ -131,6 +131,9 @@ pub fn security_descriptor_from_bytes(b: &[u8]) -> Result<SecurityDescriptor, Er
     // sid format : Revision number (1) + Number of sub authorities (1) + Authority (6) + nb*sub authorities (nb*4)
 
     // let arr: [u8; 4] = ;
+    if b.len() < 16 {
+        return Ok(descriptor);
+    }
     let group_offset = u32::from_le_bytes(
         b[12..16]
             .try_into()
@@ -653,6 +656,15 @@ mod tests {
             dacl_ace.ace_type.as_ref().unwrap(),
             "ACCESS_ALLOWED_ACE_TYPE"
         );
+    }
+
+    #[test]
+    fn descriptor_short_inputs_do_not_panic() {
+        for len in 0..=24 {
+            let input = vec![0; len];
+            let parsed = security_descriptor_from_bytes(&input);
+            assert!(parsed.is_ok(), "len {len} returned {parsed:?}");
+        }
     }
 
     #[test]
