@@ -196,6 +196,69 @@ impl SecurityDescriptorAce {
     }
 }
 
+fn ace_type_name(ace_type: u8) -> String {
+    ACE_BTYPE.get(&ace_type).map_or_else(
+        || format!("UNKNOWN_ACE_TYPE_0x{ace_type:02X}"),
+        |value| (*value).to_string(),
+    )
+}
+
+fn acl_at(bytes: &[u8], offset: usize) -> Result<Vec<SecurityDescriptorAce>, Error> {
+    let Some(ace_count) = read_u16_le(bytes, offset + 4) else {
+        return Ok(vec![]);
+    };
+
+    let mut aces = Vec::with_capacity(ace_count as usize);
+    let mut current = offset + 8;
+
+    for _ in 0..ace_count {
+        let Some(ace_type) = bytes.get(current).copied() else {
+            break;
+        };
+        let Some(ace_size) = read_u16_le(bytes, current + 2) else {
+            let partial = &bytes[current..];
+            let mut ace = ace_from_bytes(partial)?;
+            ace.ace_type = Some(ace_type_name(ace_type));
+            ace.raw_hex = Some(hex::encode(partial));
+            aces.push(ace);
+            break;
+        };
+
+        if ace_size < 4 {
+            let partial =
+                slice_at(bytes, current, bytes.len().saturating_sub(current)).unwrap_or_default();
+            let mut ace = ace_from_bytes(partial)?;
+            ace.ace_size = Some(ace_size);
+            ace.raw_hex = Some(hex::encode(partial));
+            aces.push(ace);
+            break;
+        }
+
+        let available = bytes.len().saturating_sub(current);
+        let take = available.min(ace_size as usize);
+        let Some(ace_bytes) = slice_at(bytes, current, take) else {
+            break;
+        };
+        let mut ace = ace_from_bytes(ace_bytes)?;
+        ace.ace_size = Some(ace_size);
+        if take < ace_size as usize {
+            ace.raw_hex = Some(hex::encode(ace_bytes));
+            aces.push(ace);
+            break;
+        }
+
+        aces.push(ace);
+        current += ace_size as usize;
+    }
+
+    Ok(aces)
+}
+
+fn descriptor_relative_offset(bytes: &[u8], offset: usize) -> Option<usize> {
+    let relative = read_u32_le(bytes, offset)? as usize;
+    SD_START.checked_add(relative)
+}
+
 #[pyfunction]
 pub fn security_descriptor_from_bytes(b: &[u8]) -> Result<SecurityDescriptor, Error> {
     let mut descriptor = SecurityDescriptor {
@@ -221,102 +284,16 @@ pub fn security_descriptor_from_bytes(b: &[u8]) -> Result<SecurityDescriptor, Er
         descriptor.group_sid = group_sid;
     }
 
-    //sacl
-    if has_flag(&descriptor.control_flags, "SE_SACL_PRESENT") {
-        let mut sacl_ace = vec![];
-        if b.len() < 20 {
-            return Ok(descriptor);
-        }
-        let sacl_offset = SD_START
-            + u32::from_le_bytes(
-                b[16..20]
-                    .try_into()
-                    .map_err(|_| Error::InvalidByteLenght("SACL offset".into()))?,
-            ) as usize;
-
-        let start = sacl_offset + 4;
-        let stop = start + 2;
-        if b.len() < stop {
-            return Ok(descriptor);
-        }
-        let nb_ace = u16::from_le_bytes(
-            b[start..stop]
-                .try_into()
-                .map_err(|_| Error::InvalidByteLenght("ACE number".into()))?,
-        ) as usize;
-        let mut c_offset = sacl_offset + 8;
-
-        for _ in 0..nb_ace {
-            let start = c_offset + 2;
-            let stop = start + 2;
-            if b.len() < stop {
-                return Ok(descriptor);
-            }
-            let ace_size = u16::from_le_bytes(
-                b[start..stop]
-                    .try_into()
-                    .map_err(|_| Error::InvalidByteLenght("ACE size".into()))?,
-            ) as usize;
-
-            let stop = c_offset + ace_size;
-            if b.len() < stop {
-                return Ok(descriptor);
-            }
-            let mut v = b[c_offset..stop].to_vec();
-            sacl_ace.append(&mut v);
-
-            c_offset += ace_size
-        }
-        let ace = ace_from_bytes(&sacl_ace)?;
-        descriptor.sacl_aces.push(ace);
+    if has_flag(&descriptor.control_flags, "SE_SACL_PRESENT")
+        && let Some(sacl_offset) = descriptor_relative_offset(b, SD_START + 12)
+    {
+        descriptor.sacl_aces = acl_at(b, sacl_offset)?;
     }
-    //dacl
-    if has_flag(&descriptor.control_flags, "SE_DACL_PRESENT") {
-        let mut dacl_ace = vec![];
-        if b.len() < 24 {
-            return Ok(descriptor);
-        }
 
-        let dacl_offset = SD_START
-            + u32::from_le_bytes(
-                b[20..24]
-                    .try_into()
-                    .map_err(|_| Error::InvalidByteLenght("Dacl Offset".into()))?,
-            ) as usize;
-
-        let start = dacl_offset + 4;
-        let stop = start + 2;
-        if b.len() < stop {
-            return Ok(descriptor);
-        }
-        let nb_ace = u16::from_le_bytes(
-            b[start..stop]
-                .try_into()
-                .map_err(|_| Error::InvalidByteLenght("ACE number".into()))?,
-        ) as usize;
-
-        let mut c_offset = dacl_offset + 8;
-        for _ in 0..nb_ace {
-            let start = c_offset + 2;
-            let stop = start + 2;
-            if b.len() < stop {
-                return Ok(descriptor);
-            }
-            let ace_size = u16::from_le_bytes(
-                b[start..stop]
-                    .try_into()
-                    .map_err(|_| Error::InvalidByteLenght("ACE".into()))?,
-            ) as usize;
-            let stop = c_offset + ace_size;
-            if b.len() < stop {
-                return Ok(descriptor);
-            }
-            let mut v = b[c_offset..stop].to_vec();
-            dacl_ace.append(&mut v);
-            c_offset += ace_size
-        }
-        let ace = ace_from_bytes(&dacl_ace)?;
-        descriptor.dacl_aces.push(ace);
+    if has_flag(&descriptor.control_flags, "SE_DACL_PRESENT")
+        && let Some(dacl_offset) = descriptor_relative_offset(b, SD_START + 16)
+    {
+        descriptor.dacl_aces = acl_at(b, dacl_offset)?;
     }
 
     Ok(descriptor)
