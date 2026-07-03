@@ -7,6 +7,100 @@ use std::{
 
 use crate::{Error, Record, Value, date_util::filetime_to_datetime};
 
+const SD_START: usize = 4;
+
+const SD_BFLAGS_ORDERED: &[(u16, &str)] = &[
+    (0x0001, "SE_OWNER_DEFAULTED"),
+    (0x0002, "SE_GROUP_DEFAULTED"),
+    (0x0004, "SE_DACL_PRESENT"),
+    (0x0008, "SE_DACL_DEFAULTED"),
+    (0x0010, "SE_SACL_PRESENT"),
+    (0x0020, "SE_SACL_DEFAULTED"),
+    (0x0100, "SE_DACL_AUTO_INHERIT_REQ"),
+    (0x0200, "SE_SACL_AUTO_INHERIT_REQ"),
+    (0x0400, "SE_DACL_AUTO_INHERITED"),
+    (0x0800, "SE_SACL_AUTO_INHERITED"),
+    (0x1000, "SE_DACL_PROTECTED"),
+    (0x2000, "SE_SACL_PROTECTED"),
+    (0x4000, "SE_RM_CONTROL_VALID"),
+    (0x8000, "SE_SELF_RELATIVE"),
+];
+
+const ACE_BFLAGS_ORDERED: &[(u8, &str)] = &[
+    (0x01, "OBJECT_INHERIT_ACE"),
+    (0x02, "CONTAINER_INHERIT_ACE"),
+    (0x04, "NO_PROPAGATE_INHERIT_ACE"),
+    (0x08, "INHERIT_ONLY_ACE"),
+    (0x40, "SUCCESSFUL_ACCESS_ACE_FLAG"),
+    (0x80, "FAILED_ACCESS_ACE_FLAG"),
+];
+
+const BRIGHTS_ORDERED: &[(u32, &str)] = &[
+    (0x000F_003F, "KEY_ALL_ACCESS"),
+    (0x0000_0020, "KEY_CREATE_LINK"),
+    (0x0000_0004, "KEY_CREATE_SUB_KEY"),
+    (0x0000_0008, "KEY_ENUMERATE_SUB_KEYS"),
+    (0x0000_0010, "KEY_NOTIFY"),
+    (0x0000_0001, "KEY_QUERY_VALUE"),
+    (0x0002_0019, "KEY_READ"),
+    (0x0000_0002, "KEY_SET_VALUE"),
+    (0x0000_0200, "KEY_WOW64_32KEY"),
+    (0x0000_0100, "KEY_WOW64_64KEY"),
+    (0x0002_0006, "KEY_WRITE"),
+    (0x0100_0000, "ACCESS_SYSTEM_SECURITY"),
+    (0x0200_0000, "MAXIMUM_ALLOWED"),
+    (0x1000_0000, "GENERIC_ALL"),
+    (0x2000_0000, "GENERIC_EXECUTE"),
+    (0x4000_0000, "GENERIC_WRITE"),
+    (0x8000_0000, "GENERIC_READ"),
+];
+
+fn read_u16_le(bytes: &[u8], offset: usize) -> Option<u16> {
+    let slice = bytes.get(offset..offset.checked_add(2)?)?;
+    Some(u16::from_le_bytes(slice.try_into().ok()?))
+}
+
+fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
+    let slice = bytes.get(offset..offset.checked_add(4)?)?;
+    Some(u32::from_le_bytes(slice.try_into().ok()?))
+}
+
+fn slice_at(bytes: &[u8], offset: usize, len: usize) -> Option<&[u8]> {
+    bytes.get(offset..offset.checked_add(len)?)
+}
+
+fn decode_u16_flags(bits: u16, table: &[(u16, &str)]) -> Vec<String> {
+    table
+        .iter()
+        .filter_map(|(mask, value)| (bits & mask != 0).then(|| (*value).to_string()))
+        .collect()
+}
+
+fn decode_u8_flags(bits: u8, table: &[(u8, &str)]) -> Vec<String> {
+    table
+        .iter()
+        .filter_map(|(mask, value)| (bits & mask != 0).then(|| (*value).to_string()))
+        .collect()
+}
+
+fn decode_u32_flags(bits: u32, table: &[(u32, &str)]) -> Vec<String> {
+    table
+        .iter()
+        .filter_map(|(mask, value)| (bits & mask != 0).then(|| (*value).to_string()))
+        .collect()
+}
+
+fn sid_at(bytes: &[u8], offset: usize) -> Option<String> {
+    let sub_authority_count = *bytes.get(offset.checked_add(1)?)? as usize;
+    let sid_size = 8usize.checked_add(4usize.checked_mul(sub_authority_count)?)?;
+    let sid_bytes = slice_at(bytes, offset, sid_size)?;
+    convert_sid(sid_bytes).ok()
+}
+
+fn has_flag(flags: &[String], needle: &str) -> bool {
+    flags.iter().any(|flag| flag == needle)
+}
+
 #[derive(Debug, Clone, Default)]
 #[pyclass(get_all, from_py_object)]
 pub struct SecurityDescriptor {
@@ -108,84 +202,32 @@ pub fn security_descriptor_from_bytes(b: &[u8]) -> Result<SecurityDescriptor, Er
         ..Default::default()
     };
 
-    if b.len() < 8 {
+    let Some(control_flags_bits) = read_u16_le(b, SD_START + 2) else {
         return Ok(descriptor);
-    }
-    // # size_sd = b[0:4]
-    // #every offset is relative to the start of the security descriptor which doesn't contain the size
-    let sd_start = 4;
-    // revision = b[4:6]
-    let control_flags_bits = u16::from_le_bytes(
-        b[6..8]
-            .try_into()
-            .map_err(|_| Error::InvalidByteLenght("control flags bits".into()))?,
-    ) as u32;
-    let mut control_flags = HashSet::new();
+    };
+    descriptor.control_flags = decode_u16_flags(control_flags_bits, SD_BFLAGS_ORDERED);
 
-    for (key, value) in SD_BFLAGS.iter() {
-        if key & control_flags_bits > 0 {
-            control_flags.insert(value.to_owned());
-        }
+    if let Some(owner_offset) = read_u32_le(b, SD_START + 4)
+        && let Some(owner_start) = SD_START.checked_add(owner_offset as usize)
+        && let Some(owner_sid) = sid_at(b, owner_start)
+    {
+        descriptor.owner_sid = owner_sid;
     }
-    let flags: Vec<String> = control_flags.iter().map(|flag| flag.to_string()).collect();
-    descriptor.control_flags = flags;
 
-    if b.len() < 12 {
-        return Ok(descriptor);
+    if let Some(group_offset) = read_u32_le(b, SD_START + 8)
+        && let Some(group_start) = SD_START.checked_add(group_offset as usize)
+        && let Some(group_sid) = sid_at(b, group_start)
+    {
+        descriptor.group_sid = group_sid;
     }
-    let owner_offset = u32::from_le_bytes(
-        b[8..12]
-            .try_into()
-            .map_err(|_| Error::InvalidByteLenght("Owner Offset".into()))?,
-    ) as usize;
-
-    // sid format : Revision number (1) + Number of sub authorities (1) + Authority (6) + nb*sub authorities (nb*4)
-    let start = sd_start + owner_offset + 1;
-
-    if b.len() < start + 1 {
-        return Ok(descriptor);
-    }
-    let owner_size = 8 + 4 * b[start] as usize;
-
-    let start = sd_start + owner_offset;
-    let stop = start + owner_size;
-    if b.len() < stop {
-        return Ok(descriptor);
-    }
-    let owner_sid = convert_sid(&b[start..stop])?;
-    descriptor.owner_sid = owner_sid;
-
-    // sid format : Revision number (1) + Number of sub authorities (1) + Authority (6) + nb*sub authorities (nb*4)
-
-    // let arr: [u8; 4] = ;
-    if b.len() < 16 {
-        return Ok(descriptor);
-    }
-    let group_offset = u32::from_le_bytes(
-        b[12..16]
-            .try_into()
-            .map_err(|_| Error::InvalidByteLenght("group offset".into()))?,
-    ) as usize;
-    let start = sd_start + group_offset + 1;
-    if b.len() < start + 1 {
-        return Ok(descriptor);
-    }
-    let group_size = 8 + 4 * b[start] as usize;
-    let start = sd_start + group_offset;
-    let stop = start + group_size;
-    if b.len() < stop {
-        return Ok(descriptor);
-    }
-    let group_sid = convert_sid(&b[start..stop])?;
-    descriptor.group_sid = group_sid;
 
     //sacl
-    if control_flags.contains("SE_SACL_PRESENT") {
+    if has_flag(&descriptor.control_flags, "SE_SACL_PRESENT") {
         let mut sacl_ace = vec![];
         if b.len() < 20 {
             return Ok(descriptor);
         }
-        let sacl_offset = sd_start
+        let sacl_offset = SD_START
             + u32::from_le_bytes(
                 b[16..20]
                     .try_into()
@@ -229,13 +271,13 @@ pub fn security_descriptor_from_bytes(b: &[u8]) -> Result<SecurityDescriptor, Er
         descriptor.sacl_aces.push(ace);
     }
     //dacl
-    if control_flags.contains("SE_DACL_PRESENT") {
+    if has_flag(&descriptor.control_flags, "SE_DACL_PRESENT") {
         let mut dacl_ace = vec![];
         if b.len() < 24 {
             return Ok(descriptor);
         }
 
-        let dacl_offset = sd_start
+        let dacl_offset = SD_START
             + u32::from_le_bytes(
                 b[20..24]
                     .try_into()
