@@ -9,7 +9,7 @@ Current issues:
 - JSON arrays can become invalid when `include_empty = false` and an array contains `Value::Null`. The null value writes nothing, but comma placement still uses the original element index.
 - Metadata JSON/CSV does not escape `computer` or `data_type`, while optional metadata strings are escaped.
 
-This pass uses a small central writer API for serialization fragments. It does not refactor formatter file I/O, normalized output flow, timeline output, metadata caching, or report accounting.
+This pass uses a small central writer API for serialization fragments. It does not refactor formatter file I/O, normalized output flow, metadata caching, or report accounting.
 
 ## Scope
 
@@ -20,13 +20,14 @@ In scope:
 - Add `src/serialise.rs` for JSON object/array delimiter handling and CSV field writing.
 - Use the serializer helpers from `Value` and `Metadata`.
 - Use the helpers from JSON/CSV extra-field code when it is local and straightforward.
+- Use the helpers from `TimeLine` serialization so timeline object and CSV row delimiter handling follow the same rules.
 - Add focused Rust unit tests for the two reported bugs and serializer behavior.
 
 Out of scope:
 
 - Replacing the full output stack with `serde_json` or the `csv` crate.
 - Deduplicating `JsonFormatter` and `CsvFormatter` writer setup or control flow.
-- Changing output filenames, normalized/non-normalized behavior, timeline behavior, metadata caching, or line counting.
+- Changing output filenames, normalized/non-normalized behavior, metadata caching, or line counting.
 - Changing metadata field order or CSV headers.
 - Python tests.
 
@@ -43,18 +44,37 @@ JSON helpers:
   - tracks whether any field has been emitted
   - writes commas only between emitted fields
   - escapes field names
-  - supports callers skipping fields before writing
+  - exposes `field_raw(name, write_value)` for always-emitted fields
+  - exposes `field_if(name, should_emit, write_value)` for optional fields
+  - writes the delimiter and field name only when `should_emit` is true
+  - never requires callers to manage object commas
 
 - `JsonArrayWriter`
   - starts and ends `[...]`
   - tracks emitted element count rather than source index
   - writes commas only between values actually emitted
+  - exposes `element_raw(write_value)` for always-emitted elements
+  - exposes `element_if(should_emit, write_value)` for optional elements
+  - writes the delimiter only when `should_emit` is true
+  - must not advance delimiter state when a skipped value writes no bytes
+
+Skipped JSON value contract:
+
+- Callers decide whether a value should be emitted before asking the writer to write a delimiter.
+- `Value::Null` with `include_empty = false` is a skipped value.
+- Non-null values are emitted, including empty strings, empty arrays, empty objects, zero, and false.
+- Writer methods with `*_if` names own both the condition and the delimiter state. Callers must not call `element_raw` or `field_raw` for a value that may intentionally serialize to zero bytes.
 
 CSV helpers:
 
-- write a quoted, CSV-escaped string field
-- write an optional quoted string field, leaving an empty field when missing
-- write delimiters consistently using the existing `CSV_DELIMITER`
+- `CsvRowWriter`
+  - tracks the field count for a single row
+  - writes delimiters before fields after the first field
+  - exposes `raw_field(value)` for already-serialized primitive values
+  - exposes `quoted_field(value)` for CSV-escaped string values
+  - exposes `optional_quoted_field(value)` for optional CSV-escaped string values
+  - exposes `empty_field()` for an intentionally blank cell
+  - writes delimiters consistently using the existing `CSV_DELIMITER`
 
 The helpers should stay small and direct. They are not intended to model a full streaming serializer.
 
@@ -69,6 +89,7 @@ Array behavior becomes consistent with object behavior:
 
 - array elements with `Value::Null` are omitted when `include_empty = false`
 - array elements with `Value::Null` are emitted as `null` when `include_empty = true`
+- omitted array elements are skipped, not replaced with `null`; preserving array positions is not required for this output mode
 
 Examples when `include_empty = false`:
 
@@ -115,6 +136,8 @@ CSV rows may become more quoted than before for the first two metadata columns. 
 
 The JSON/CSV extra-field helpers in `format_json.rs` and `format_csv.rs` should use the new serializer primitives for their local key/value or field quoting work. The implementation must not refactor formatter control flow while doing this.
 
+`TimeLine::json_serialise` and `TimeLine::csv_serialise` are in scope for local serializer use because they currently own similar comma and field-delimiter logic. Timeline serialization behavior, field order, optional metadata/data handling, and CSV headers must remain unchanged except for escaping and delimiter correctness from the shared writers.
+
 ## Tests
 
 Add tests next to the changed code.
@@ -131,6 +154,13 @@ Add tests next to the changed code.
 - JSON metadata with quotes, backslashes, newlines, tabs, and control characters in `computer` and `data_type` parses with `serde_json` and returns the original field values, except for carriage returns which current JSON escaping drops.
 - CSV metadata with delimiter characters, quotes, and newlines in `computer` and `data_type` parses with the `csv` crate into the original field values.
 - Existing metadata ordering/header tests remain.
+
+`src/timeline.rs`:
+
+- JSON timeline rows with optional metadata and data still parse with `serde_json`.
+- JSON timeline rows with missing optional metadata or data do not leave dangling or doubled commas.
+- CSV timeline rows with metadata/data strings containing delimiters, quotes, and newlines parse with the `csv` crate into the original field values.
+- Existing timeline field order and header expectations remain.
 
 Formatter tests:
 
