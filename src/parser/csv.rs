@@ -153,7 +153,10 @@ fn parse_lines(
         match record {
             Ok(string_record) => {
                 for (column, data) in string_record.iter().enumerate() {
-                    match &mut converters[column] {
+                    let Some(converter) = converters.get_mut(column) else {
+                        continue;
+                    };
+                    match converter {
                         Some(converter) => {
                             if let Err(e) = converter.parse_with_context(
                                 Some(data),
@@ -354,6 +357,45 @@ mod tests {
         assert_eq!(lines[1]["name"], "Bob");
         assert_eq!(lines[1]["message"], "2");
         assert!(lines[1]["count"].is_null());
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn csv_parser_ignores_extra_columns_beyond_header() {
+        let output_folder = Path::new(".tmp").join("csv_extra_columns");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("wide.csv");
+        fs::write(
+            &input_path,
+            "Name;Message;Count\nAlice;ok;1;ignored-extra\nBob;after;2\n",
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![csv_output_conf("wide", &output_folder)], true, None);
+
+        let report = parse_csv(
+            input_path.to_str().unwrap(),
+            run_config,
+            csv_plugin_config(";"),
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 2);
+        let jsonl = fs::read_to_string(output_folder.join("wide.csv_edge.jsonl")).unwrap();
+        let lines: Vec<Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[0]["name"], "Alice");
+        assert_eq!(lines[0]["message"], "ok");
+        assert_eq!(lines[0]["count"], 1);
+        assert_eq!(lines[1]["name"], "Bob");
+        assert_eq!(lines[1]["message"], "after");
+        assert_eq!(lines[1]["count"], 2);
 
         remove_dir_if_exists(&output_folder);
     }
