@@ -366,4 +366,38 @@ mod tests {
         let expected = r#"{"computer":"host1","data_type":"evtx","folder":"folder \"quoted\"","creation_date":"2020-01-01T00:00:00.000000+00:00"}"#;
         assert_eq!(buffer, expected);
     }
+
+    #[test]
+    fn json_serialise_escapes_computer_and_data_type() {
+        let mut metadata = Metadata::new("host\"one\\two\n\t\u{0001}".to_owned());
+        metadata.data_type = "evtx\"type\\kind\n\t\u{000B}".to_owned();
+
+        let mut buffer = String::new();
+        metadata.json_serialise(&mut buffer, &DateOutputCodec::Iso());
+
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed["computer"], "host\"one\\two\n\t\u{0001}");
+        assert_eq!(parsed["data_type"], "evtx\"type\\kind\n\t\u{000B}");
+    }
+
+    #[test]
+    fn csv_serialise_escapes_computer_and_data_type() {
+        let mut metadata = Metadata::new("host;\"one\"\nnext".to_owned());
+        metadata.data_type = "evtx;\"type\"\nnext".to_owned();
+
+        let mut csv = String::new();
+        Metadata::csv_serialise_header(&mut csv);
+        csv.push('\n');
+        metadata.csv_serialise(&mut csv, &DateOutputCodec::Iso());
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(Box::new(csv.as_bytes()));
+        let record = reader.records().next().unwrap().unwrap();
+
+        assert_eq!(&record[0], "host;\"one\"\nnext");
+        assert_eq!(&record[1], "evtx;\"type\"\nnext");
+        assert_eq!(13, record.len());
+    }
 }
