@@ -15,6 +15,7 @@ mod output_writer;
 mod parser;
 mod record;
 mod registry_api;
+mod serialise;
 mod seven_zip_unpack;
 mod timeline;
 mod value;
