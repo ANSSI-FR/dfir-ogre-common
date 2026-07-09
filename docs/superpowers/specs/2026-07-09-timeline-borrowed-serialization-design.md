@@ -34,11 +34,13 @@ CSV uses the same pattern. Normalized output also clones the timeline vector bef
 
 ## Approach
 
-Add crate-private borrowed serialization helpers near `TimeLine`, keeping `TimeLine` as the owned data model. The helpers will serialize a borrowed `&TimeLine` with optional borrowed overrides:
+Add crate-private borrowed serialization helpers near `TimeLine`, keeping `TimeLine` as the owned data model. The helpers will serialize a borrowed `&TimeLine` with explicit borrowed formatter context:
 
 - `metadata: Option<&MetadataSerialized>` for non-normalized timeline output.
 - `data: Option<&Record>` for non-normalized timeline output.
-- `metadata_id: Option<&str>` for normalized output fallback.
+- `metadata_id: Option<&str>` for normalized formatter output.
+
+Public `TimeLine::json_serialise` and `TimeLine::csv_serialise` use the owned optional fields stored on `TimeLine`. Formatter-only helpers use the borrowed context passed by the formatter for fields the formatter currently injects into cloned timeline values. This means formatter context takes precedence over the corresponding owned timeline field for formatter-injected fields, preserving current behavior without mutating the source `TimeLine`.
 
 Existing public `TimeLine::json_serialise` and `TimeLine::csv_serialise` will delegate to the borrowed helpers by passing `self.metadata.as_ref()`, `self.data.as_ref()`, and `self.metadata_id.as_deref()`.
 
@@ -63,18 +65,18 @@ For normalized JSON and CSV timeline output:
 
 1. The formatter iterates over `&data.timeline`.
 2. The serializer writes scalar timeline fields from the timeline entry.
-3. The serializer uses the timeline's existing `metadata_id`, falling back to `line_builder.metadata_id` if needed.
+3. The formatter passes `line_builder.metadata_id` as the normalized metadata ID. The borrowed serializer uses that formatter-provided ID instead of the timeline's existing `metadata_id`, matching the current cloned-timeline assignment behavior.
 4. Data records continue to be written once to the data writer with `ogre_md_id`.
 
 ## Error Handling
 
 The borrowed helpers must preserve current rollback behavior. If nested record serialization fails, the destination buffer must be truncated back to the pre-write length and the original error returned.
 
-JSON helpers will use `JsonObjectWriter::try_field_raw` for fallible nested values. CSV helpers will use `CsvRowWriter::try_raw_field` when writing fallible serialized data fields.
+JSON helpers will use `JsonObjectWriter::try_field_raw` for fallible nested values. CSV helpers must write quoted CSV fields with rollback safety. The implementation will add or reuse a rollback-safe quoted-field helper, such as `CsvRowWriter::try_quoted_field`, so serialized JSON payloads are quoted and escaped exactly like the existing `quoted_field` path while still rolling back partial writes on error.
 
 ## Testing
 
-Existing JSON and CSV timeline tests should pass unchanged.
+Existing JSON and CSV timeline tests must pass unchanged.
 
 Add focused regression tests that write timeline output through the formatter and assert that source timeline entries are not mutated. After writing:
 
@@ -93,4 +95,4 @@ Verification commands:
 
 The main risk is accidentally changing field omission or field order when duplicating serialization logic. The implementation will reduce that risk by extracting shared private helpers and having the public owned methods delegate to them.
 
-Another risk is changing normalized output behavior when a timeline already has `metadata_id`. The helper will prefer the timeline's existing ID and only use the formatter-provided ID as a fallback.
+Another risk is changing normalized output behavior when a timeline already has `metadata_id`. The borrowed formatter helper will prefer the formatter-provided `line_builder.metadata_id`, matching the current assignment made to cloned timeline values.
