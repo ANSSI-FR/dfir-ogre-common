@@ -141,6 +141,22 @@ impl<'a> CsvRowWriter<'a> {
         Ok(())
     }
 
+    pub(crate) fn try_quoted_field<F>(&mut self, write_value: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut String) -> Result<(), Error>,
+    {
+        let buffer_len = self.buffer.len();
+        let fields = self.fields;
+        let mut field_buffer = String::new();
+        if let Err(error) = write_value(&mut field_buffer) {
+            self.buffer.truncate(buffer_len);
+            self.fields = fields;
+            return Err(error);
+        }
+        self.quoted_field(&field_buffer);
+        Ok(())
+    }
+
     pub(crate) fn quoted_field(&mut self, value: &str) {
         self.write_delimiter();
         self.buffer.push('"');
@@ -245,6 +261,40 @@ mod tests {
         row.optional_quoted_field(Some("c"));
 
         assert_eq!(buffer, r#""a""b";;"c""#);
+    }
+
+    #[test]
+    fn csv_row_writer_try_quoted_field_quotes_and_escapes_generated_content() {
+        let mut buffer = String::new();
+        let mut row = CsvRowWriter::new(&mut buffer);
+
+        row.quoted_field("first");
+        row.try_quoted_field(|field| {
+            field.push_str("hello;\"world\"\nnext");
+            Ok(())
+        })
+        .unwrap();
+        row.quoted_field("last");
+
+        assert_eq!(buffer, "\"first\";\"hello;\"\"world\"\"\nnext\";\"last\"");
+    }
+
+    #[test]
+    fn csv_row_writer_try_quoted_field_rolls_back_failed_content() {
+        let mut buffer = String::new();
+        let result = {
+            let mut row = CsvRowWriter::new(&mut buffer);
+            row.quoted_field("first");
+            let result = row.try_quoted_field(|field| {
+                field.push_str("partial;\"payload\"");
+                Err(Error::PluginError("boom".to_owned()))
+            });
+            row.quoted_field("second");
+            result
+        };
+
+        assert!(matches!(result, Err(Error::PluginError(_))));
+        assert_eq!(buffer, "\"first\";\"second\"");
     }
 
     #[test]
