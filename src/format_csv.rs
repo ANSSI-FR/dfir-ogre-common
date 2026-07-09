@@ -8,7 +8,7 @@ use crate::{
     output::OutputType,
     output_writer::{FileWriter, GzipWriter, Writer},
     serialise::CsvRowWriter,
-    timeline::TimeLine,
+    timeline::{TimeLine, TimelineSerializationContext},
 };
 pub const CSV_DELIMITER: char = ';';
 
@@ -203,16 +203,19 @@ impl CsvFormatter {
     pub fn write(&mut self, line_builder: &LineBuilder) -> Result<(), Error> {
         let data = &line_builder.line_data;
         if self.include_timeline {
-            for mut timeline in data.timeline.clone() {
-                timeline.metadata = Some(self.serialized_metadata(&line_builder.metadata));
-                timeline.data = Some(data.data.clone());
-
+            let metadata = self.serialized_metadata(&line_builder.metadata);
+            for timeline in &data.timeline {
                 self.line_buffer.clear();
-                timeline.csv_serialise(
+                timeline.csv_serialise_with_context(
                     &mut self.line_buffer,
                     &self.output_date_codec,
                     self.include_empty,
                     false,
+                    TimelineSerializationContext {
+                        metadata: Some(&metadata),
+                        data: Some(&data.data),
+                        metadata_id: timeline.metadata_id.as_deref(),
+                    },
                 )?;
 
                 self.line_buffer.push('\n');
@@ -255,14 +258,18 @@ impl CsvFormatter {
         if self.include_timeline
             && let Some(timeline_writer) = &mut self.timeline_writer
         {
-            for mut timeline in data.timeline.clone() {
-                timeline.metadata_id = Some(line_builder.metadata_id.clone());
+            for timeline in &data.timeline {
                 self.line_buffer.clear();
-                timeline.csv_serialise(
+                timeline.csv_serialise_with_context(
                     &mut self.line_buffer,
                     &self.output_date_codec,
                     self.include_empty,
                     true,
+                    TimelineSerializationContext {
+                        metadata: timeline.metadata.as_ref(),
+                        data: timeline.data.as_ref(),
+                        metadata_id: Some(&line_builder.metadata_id),
+                    },
                 )?;
                 self.line_buffer.push('\n');
                 timeline_writer.write(&mut self.line_buffer)?;
@@ -349,6 +356,29 @@ mod tests {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => panic!("failed to remove {}: {error}", path.display()),
         }
+    }
+
+    fn timeline_field_mapping_for_two_dates() -> FieldMapping {
+        FieldMapping::new(
+            vec![
+                Field::Single {
+                    name: FieldName::new("when_a".into(), false, None, None, None),
+                    parser: Parser::DateTime(DateInputCodec::Iso()),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("when_b".into(), false, None, None, None),
+                    parser: Parser::DateTime(DateInputCodec::Iso()),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("message".into(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+            ],
+            None,
+        )
     }
 
     /// Tests writing to a plain text file.
@@ -541,6 +571,150 @@ mod tests {
         assert_eq!(&parsed[0], "Hello");
         assert_eq!(&parsed[1], "{\"computer\":\"test\",\"data_type\":\"\"}");
         assert!(!record.contains_key(OUTPUT_METADATA_FIELD));
+    }
+
+    #[test]
+    fn timeline_csv_write_does_not_mutate_source_timelines() {
+        std::fs::create_dir_all(TMP_FOLDER).unwrap();
+        let base_file_name = "test_csv_timeline_no_mutation";
+        let path = Path::new(TMP_FOLDER).join(format!("{base_file_name}.csv"));
+        remove_if_exists(&path);
+
+        let timeline_builder = TimeLineBuilder::new(
+            crate::TimeLineType::Standard,
+            "csv_test".to_string(),
+            100,
+            None,
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("host-csv-timeline".into()),
+            Some(timeline_builder),
+            timeline_field_mapping_for_two_dates(),
+            false,
+            false,
+            true,
+        );
+        let mut output = CsvFormatter::new(
+            None,
+            OutputType::File,
+            TMP_FOLDER,
+            base_file_name,
+            DateOutputCodec::Iso(),
+            false,
+            true,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+
+        let mut record = Record::new();
+        let timestamp_a =
+            crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        let timestamp_b =
+            crate::date_util::parse_date("2020-01-02T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        record.add("when_a", Value::Date(timestamp_a));
+        record.add("when_b", Value::Date(timestamp_b));
+        record.add("message", Value::String("Hello".to_owned()));
+        line_builder.build(&mut record).unwrap();
+
+        assert_eq!(line_builder.line_data.timeline.len(), 2);
+        output.write(&line_builder).unwrap();
+        output.close().unwrap();
+
+        for timeline in &line_builder.line_data.timeline {
+            assert!(timeline.metadata.is_none());
+            assert!(timeline.data.is_none());
+        }
+
+        let output_text = fs::read_to_string(&path).unwrap();
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(Box::new(output_text.as_bytes()));
+        let rows: Vec<_> = reader.records().collect::<Result<_, _>>().unwrap();
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            assert_eq!(&row[0], "");
+            assert_eq!(&row[3], "csv_test");
+            assert!(row[7].contains("\"computer\":\"host-csv-timeline\""));
+            assert!(row[8].contains("\"message\":\"Hello\""));
+        }
+
+        remove_if_exists(&path);
+    }
+
+    #[test]
+    fn normalized_csv_timeline_uses_formatter_metadata_id() {
+        std::fs::create_dir_all(TMP_FOLDER).unwrap();
+        let base_file_name = "test_csv_timeline_md_id";
+        let data_path = Path::new(TMP_FOLDER).join(format!("{base_file_name}.csv"));
+        let metadata_path = Path::new(TMP_FOLDER).join("ogre_metadata.csv");
+        let timeline_path = Path::new(TMP_FOLDER).join(format!("{base_file_name}.tl.csv"));
+        remove_if_exists(&data_path);
+        remove_if_exists(&metadata_path);
+        remove_if_exists(&timeline_path);
+
+        let timeline_builder = TimeLineBuilder::new(
+            crate::TimeLineType::Standard,
+            "csv_test".to_string(),
+            100,
+            None,
+            None,
+        );
+        let field_mapping = timeline_field_mapping_for_two_dates();
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("host-csv-timeline".into()),
+            Some(timeline_builder),
+            field_mapping.clone(),
+            true,
+            false,
+            true,
+        );
+        let mut output = CsvFormatter::new(
+            Some(field_mapping),
+            OutputType::File,
+            TMP_FOLDER,
+            base_file_name,
+            DateOutputCodec::Iso(),
+            false,
+            true,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            true,
+        )
+        .unwrap();
+
+        let mut record = Record::new();
+        let timestamp_a =
+            crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        let timestamp_b =
+            crate::date_util::parse_date("2020-01-02T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        record.add("when_a", Value::Date(timestamp_a));
+        record.add("when_b", Value::Date(timestamp_b));
+        record.add("message", Value::String("Hello".to_owned()));
+        line_builder.build(&mut record).unwrap();
+        line_builder.line_data.timeline[0].metadata_id = Some("stale-md-id".to_owned());
+
+        output.write_normalized(&line_builder).unwrap();
+        output.close().unwrap();
+
+        let timeline = fs::read_to_string(&timeline_path).unwrap();
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(Box::new(timeline.as_bytes()));
+        let first = reader.records().next().unwrap().unwrap();
+        assert_eq!(&first[8], &line_builder.metadata_id);
+
+        remove_if_exists(&data_path);
+        remove_if_exists(&metadata_path);
+        remove_if_exists(&timeline_path);
     }
 
     #[test]
