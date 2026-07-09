@@ -50,6 +50,14 @@ pub struct TimeLine {
     pub data_id: Option<String>,
     pub data: Option<Record>,
 }
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TimelineSerializationContext<'a> {
+    pub(crate) metadata: Option<&'a MetadataSerialized>,
+    pub(crate) data: Option<&'a Record>,
+    pub(crate) metadata_id: Option<&'a str>,
+}
+
 impl TimeLine {
     pub fn json_serialise(
         &self,
@@ -57,30 +65,53 @@ impl TimeLine {
         date_codec: &DateOutputCodec,
         include_empty: bool,
     ) -> Result<(), Error> {
-        let mut data_buffer = String::new();
-        if let Some(data) = &self.data {
-            data.json_serialise(&mut data_buffer, date_codec, include_empty)?;
-        }
+        self.json_serialise_with_context(
+            buffer,
+            date_codec,
+            include_empty,
+            TimelineSerializationContext {
+                metadata: self.metadata.as_ref(),
+                data: self.data.as_ref(),
+                metadata_id: self.metadata_id.as_deref(),
+            },
+        )
+    }
 
-        let mut object = JsonObjectWriter::new(buffer);
-        object.optional_string_field("id", self.id.as_deref());
-        object.optional_string_field("computer", self.computer.as_deref());
-        object.string_field("timestamp", &serialize_date(&self.timestamp, date_codec));
-        object.string_field("timestamp_meaning", &self.timestamp_meaning);
-        object.string_field("data_type", &self.data_type);
-        object.string_field("related_user", &self.related_user);
-        object.string_field("description", &self.description);
-        object.string_field("additional_description", &self.additional_description);
-        object.optional_string_field("metadata_id", self.metadata_id.as_deref());
-        object.field_if("metadata", self.metadata.is_some(), |buffer| {
-            buffer.push_str(self.metadata.as_ref().unwrap().0.as_str());
-        });
-        object.optional_string_field("data_id", self.data_id.as_deref());
-        object.field_if("data", self.data.is_some(), |buffer| {
-            buffer.push_str(&data_buffer);
-        });
-        object.finish();
-        Ok(())
+    pub(crate) fn json_serialise_with_context(
+        &self,
+        buffer: &mut String,
+        date_codec: &DateOutputCodec,
+        include_empty: bool,
+        context: TimelineSerializationContext<'_>,
+    ) -> Result<(), Error> {
+        let start_len = buffer.len();
+        let result = (|| {
+            let mut object = JsonObjectWriter::new(buffer);
+            object.optional_string_field("id", self.id.as_deref());
+            object.optional_string_field("computer", self.computer.as_deref());
+            object.string_field("timestamp", &serialize_date(&self.timestamp, date_codec));
+            object.string_field("timestamp_meaning", &self.timestamp_meaning);
+            object.string_field("data_type", &self.data_type);
+            object.string_field("related_user", &self.related_user);
+            object.string_field("description", &self.description);
+            object.string_field("additional_description", &self.additional_description);
+            object.optional_string_field("metadata_id", context.metadata_id);
+            object.field_if("metadata", context.metadata.is_some(), |buffer| {
+                buffer.push_str(context.metadata.unwrap().0.as_str());
+            });
+            object.optional_string_field("data_id", self.data_id.as_deref());
+            if let Some(data) = context.data {
+                object.try_field_raw("data", |buffer| {
+                    data.json_serialise(buffer, date_codec, include_empty)
+                })?;
+            }
+            object.finish();
+            Ok(())
+        })();
+        if result.is_err() {
+            buffer.truncate(start_len);
+        }
+        result
     }
 
     pub fn compute_id(&mut self, hasher: &mut Hasher) {
@@ -114,37 +145,60 @@ impl TimeLine {
         include_empty: bool,
         normalized: bool,
     ) -> Result<(), Error> {
-        let mut row = CsvRowWriter::new(buffer);
-        if normalized {
-            row.quoted_field(self.id.as_deref().unwrap_or_default());
-        }
-        row.quoted_field(self.computer.as_deref().unwrap_or_default());
-        row.raw_field(&serialize_date(&self.timestamp, date_codec));
-        row.quoted_field(&self.timestamp_meaning);
-        row.quoted_field(&self.data_type);
-        row.quoted_field(&self.related_user);
-        row.quoted_field(&self.description);
-        row.quoted_field(&self.additional_description);
+        self.csv_serialise_with_context(
+            buffer,
+            date_codec,
+            include_empty,
+            normalized,
+            TimelineSerializationContext {
+                metadata: self.metadata.as_ref(),
+                data: self.data.as_ref(),
+                metadata_id: self.metadata_id.as_deref(),
+            },
+        )
+    }
 
-        if normalized {
-            row.quoted_field(self.metadata_id.as_deref().unwrap_or_default());
-            row.quoted_field(self.data_id.as_deref().unwrap_or_default());
-        } else {
-            row.quoted_field(
-                self.metadata
-                    .as_ref()
-                    .map(|m| m.0.as_str())
-                    .unwrap_or_default(),
-            );
-            if let Some(data) = &self.data {
-                let mut object_buffer = String::new();
-                data.json_serialise(&mut object_buffer, date_codec, include_empty)?;
-                row.quoted_field(&object_buffer);
-            } else {
-                row.empty_field();
+    pub(crate) fn csv_serialise_with_context(
+        &self,
+        buffer: &mut String,
+        date_codec: &DateOutputCodec,
+        include_empty: bool,
+        normalized: bool,
+        context: TimelineSerializationContext<'_>,
+    ) -> Result<(), Error> {
+        let start_len = buffer.len();
+        let result = (|| {
+            let mut row = CsvRowWriter::new(buffer);
+            if normalized {
+                row.quoted_field(self.id.as_deref().unwrap_or_default());
             }
+            row.quoted_field(self.computer.as_deref().unwrap_or_default());
+            row.raw_field(&serialize_date(&self.timestamp, date_codec));
+            row.quoted_field(&self.timestamp_meaning);
+            row.quoted_field(&self.data_type);
+            row.quoted_field(&self.related_user);
+            row.quoted_field(&self.description);
+            row.quoted_field(&self.additional_description);
+
+            if normalized {
+                row.quoted_field(context.metadata_id.unwrap_or_default());
+                row.quoted_field(self.data_id.as_deref().unwrap_or_default());
+            } else {
+                row.quoted_field(context.metadata.map(|m| m.0.as_str()).unwrap_or_default());
+                if let Some(data) = context.data {
+                    row.try_quoted_field(|field| {
+                        data.json_serialise(field, date_codec, include_empty)
+                    })?;
+                } else {
+                    row.empty_field();
+                }
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            buffer.truncate(start_len);
         }
-        Ok(())
+        result
     }
 
     pub fn csv_serialise_header(buffer: &mut String, normalized: bool) {
@@ -1355,6 +1409,55 @@ mod tests {
         assert!(parsed.get("data").is_none());
         assert!(!json.contains(",,"));
         assert!(!json.contains(",}"));
+    }
+
+    #[test]
+    fn timeline_json_context_metadata_id_overrides_owned_metadata_id() {
+        let mut tl = timeline_for_serialization_tests();
+        tl.metadata_id = Some("owned-md-id".to_owned());
+
+        let mut json = String::new();
+        tl.json_serialise_with_context(
+            &mut json,
+            &DateOutputCodec::IsoUtc(),
+            false,
+            TimelineSerializationContext {
+                metadata_id: Some("formatter-md-id"),
+                ..TimelineSerializationContext::default()
+            },
+        )
+        .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["metadata_id"], "formatter-md-id");
+    }
+
+    #[test]
+    fn timeline_csv_context_metadata_id_overrides_owned_metadata_id() {
+        let mut tl = timeline_for_serialization_tests();
+        tl.metadata_id = Some("owned-md-id".to_owned());
+        tl.data_id = Some("data-id".to_owned());
+
+        let mut csv = String::new();
+        tl.csv_serialise_with_context(
+            &mut csv,
+            &DateOutputCodec::IsoUtc(),
+            false,
+            true,
+            TimelineSerializationContext {
+                metadata_id: Some("formatter-md-id"),
+                ..TimelineSerializationContext::default()
+            },
+        )
+        .unwrap();
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(Box::new(csv.as_bytes()));
+        let record = reader.records().next().unwrap().unwrap();
+        assert_eq!(&record[8], "formatter-md-id");
+        assert_eq!(&record[9], "data-id");
     }
 
     #[test]
