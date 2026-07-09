@@ -18,7 +18,7 @@ The change will preserve the public `TimeLine` struct and its existing `json_ser
 
 - Do not change the ownership model of `LineBuilder` or `LineData`.
 - Do not drain timeline entries during formatting.
-- Do not add public API surface unless the implementation reveals a strong need.
+- Do not add public API surface in this pass.
 - Do not add benchmark infrastructure in this pass.
 
 ## Current Problem
@@ -72,16 +72,16 @@ For normalized JSON and CSV timeline output:
 
 The borrowed helpers must preserve current rollback behavior. If nested record serialization fails, the destination buffer must be truncated back to the pre-write length and the original error returned.
 
-JSON helpers will use `JsonObjectWriter::try_field_raw` for fallible nested values. CSV helpers must write quoted CSV fields with rollback safety. The implementation will add or reuse a rollback-safe quoted-field helper, such as `CsvRowWriter::try_quoted_field`, so serialized JSON payloads are quoted and escaped exactly like the existing `quoted_field` path while still rolling back partial writes on error.
+JSON helpers will use `JsonObjectWriter::try_field_raw` for fallible nested values. CSV helpers must write quoted CSV fields with rollback safety. The implementation will add or reuse a rollback-safe quoted-field helper, such as `CsvRowWriter::try_quoted_field`, whose closure writes unescaped field content into a temporary buffer. The helper is responsible for adding quotes and applying CSV escaping exactly once, matching the existing `quoted_field` path while still rolling back partial writes on error.
 
 ## Testing
 
 Existing JSON and CSV timeline tests must pass unchanged.
 
-Add focused regression tests that write timeline output through the formatter and assert that source timeline entries are not mutated. After writing:
+Add focused regression tests that write multiple timeline entries through the formatter and assert that no source timeline entry is mutated. After writing, every entry in `line_builder.line_data.timeline` must satisfy:
 
-- `line_builder.line_data.timeline[0].metadata` remains `None`.
-- `line_builder.line_data.timeline[0].data` remains `None`.
+- `timeline.metadata` remains `None`.
+- `timeline.data` remains `None`.
 
 Keep existing `TimeLine::json_serialise` and `TimeLine::csv_serialise` tests to confirm owned optional metadata and data still serialize correctly through the public methods.
 
