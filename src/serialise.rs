@@ -1,4 +1,4 @@
-use crate::{escape_special_chars, format_csv::CSV_DELIMITER, value::escape_special_chars_csv};
+use crate::{Error, escape_special_chars, format_csv::CSV_DELIMITER, value::escape_special_chars_csv};
 
 pub(crate) struct JsonObjectWriter<'a> {
     buffer: &'a mut String,
@@ -17,6 +17,35 @@ impl<'a> JsonObjectWriter<'a> {
     {
         self.write_field_prefix(name);
         write_value(self.buffer);
+    }
+
+    pub(crate) fn try_field_raw<F>(&mut self, name: &str, write_value: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut String) -> Result<(), Error>,
+    {
+        let buffer_len = self.buffer.len();
+        let fields = self.fields;
+        self.write_field_prefix(name);
+        if let Err(error) = write_value(self.buffer) {
+            self.buffer.truncate(buffer_len);
+            self.fields = fields;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn string_field(&mut self, name: &str, value: &str) {
+        self.field_raw(name, |buffer| {
+            buffer.push('"');
+            buffer.push_str(&escape_special_chars(value));
+            buffer.push('"');
+        });
+    }
+
+    pub(crate) fn optional_string_field(&mut self, name: &str, value: Option<&str>) {
+        if let Some(value) = value {
+            self.string_field(name, value);
+        }
     }
 
     pub(crate) fn field_if<F>(&mut self, name: &str, should_emit: bool, write_value: F)
@@ -66,6 +95,24 @@ impl<'a> JsonArrayWriter<'a> {
         }
         self.elements += 1;
         write_value(self.buffer);
+    }
+
+    pub(crate) fn try_element_raw<F>(&mut self, write_value: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut String) -> Result<(), Error>,
+    {
+        let buffer_len = self.buffer.len();
+        let elements = self.elements;
+        if self.elements != 0 {
+            self.buffer.push(',');
+        }
+        self.elements += 1;
+        if let Err(error) = write_value(self.buffer) {
+            self.buffer.truncate(buffer_len);
+            self.elements = elements;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(crate) fn element_if<F>(&mut self, should_emit: bool, write_value: F)
@@ -120,5 +167,76 @@ impl<'a> CsvRowWriter<'a> {
             self.buffer.push(CSV_DELIMITER);
         }
         self.fields += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Error;
+
+    #[test]
+    fn json_object_writer_writes_strings_and_skips_missing_optionals() {
+        let mut buffer = String::new();
+        let mut object = JsonObjectWriter::new(&mut buffer);
+
+        object.string_field("bad\"key", "value\"with\\chars\n");
+        object.optional_string_field("missing", None);
+        object.optional_string_field("present", Some("kept"));
+        object.finish();
+
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed["bad\"key"], "value\"with\\chars\n");
+        assert_eq!(parsed["present"], "kept");
+        assert!(parsed.get("missing").is_none());
+    }
+
+    #[test]
+    fn json_object_writer_rolls_back_failed_field() {
+        let mut buffer = String::from("prefix");
+        let result = {
+            let mut object = JsonObjectWriter::new(&mut buffer);
+            let result = object.try_field_raw("bad", |buffer| {
+                buffer.push_str("\"partial\"");
+                Err(Error::PluginError("boom".to_owned()))
+            });
+            object.string_field("ok", "value");
+            object.finish();
+            result
+        };
+
+        assert!(matches!(result, Err(Error::PluginError(_))));
+        assert_eq!(buffer, r#"prefix{"ok":"value"}"#);
+    }
+
+    #[test]
+    fn json_array_writer_rolls_back_failed_element() {
+        let mut buffer = String::from("prefix");
+        let result = {
+            let mut array = JsonArrayWriter::new(&mut buffer);
+            array.element_raw(|buffer| buffer.push_str("1"));
+            let result = array.try_element_raw(|buffer| {
+                buffer.push_str("partial");
+                Err(Error::PluginError("boom".to_owned()))
+            });
+            array.element_raw(|buffer| buffer.push_str("2"));
+            array.finish();
+            result
+        };
+
+        assert!(matches!(result, Err(Error::PluginError(_))));
+        assert_eq!(buffer, "prefix[1,2]");
+    }
+
+    #[test]
+    fn csv_row_writer_quotes_and_escapes_fields() {
+        let mut buffer = String::new();
+        let mut row = CsvRowWriter::new(&mut buffer);
+
+        row.quoted_field("a\"b");
+        row.optional_quoted_field(None);
+        row.optional_quoted_field(Some("c"));
+
+        assert_eq!(buffer, r#""a""b";;"c""#);
     }
 }
