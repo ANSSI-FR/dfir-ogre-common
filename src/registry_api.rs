@@ -116,8 +116,14 @@ impl HiveData {
         let mut hive_file = File::open(input_file)
             .map_err(|e| Error::FileRead(input_file.to_string(), e.to_string()))?;
 
-        let mut hive_data = Vec::with_capacity(hive_file.metadata().unwrap().len() as usize);
-        hive_file.read_to_end(&mut hive_data).unwrap();
+        let len = hive_file
+            .metadata()
+            .map_err(|e| Error::FileRead(input_file.to_string(), e.to_string()))?
+            .len() as usize;
+        let mut hive_data = Vec::with_capacity(len);
+        hive_file
+            .read_to_end(&mut hive_data)
+            .map_err(|e| Error::FileRead(input_file.to_string(), e.to_string()))?;
         Ok(Self {
             input_file: input_file.to_string(),
             hive_data,
@@ -829,6 +835,22 @@ mod tests {
         assert_eq!(MatchStatus::InProgress, search.match_key("other"));
         assert_eq!(MatchStatus::InProgress, search.match_key("test245"));
         assert_eq!(MatchStatus::True, search.match_key("END"));
+    }
+
+    #[test]
+    fn load_registry_returns_file_read_error_for_directory_path() {
+        let error = match Registry::load_registry("test_data", "") {
+            Ok(_) => panic!("directory should not load"),
+            Err(error) => error,
+        };
+
+        match error {
+            Error::FileRead(path, message) => {
+                assert_eq!(path, "test_data");
+                assert!(!message.is_empty());
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 
     #[test]

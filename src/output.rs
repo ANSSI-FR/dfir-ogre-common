@@ -378,8 +378,13 @@ impl Output {
     }
 
     /// Exit the context, ensuring each writer is cleanly closed.
-    pub fn __exit__(&mut self, _exc_type: Py<PyAny>, _exc_value: Py<PyAny>, _traceback: Py<PyAny>) {
-        let _ = self.finalize();
+    pub fn __exit__(
+        &mut self,
+        _exc_type: Py<PyAny>,
+        _exc_value: Py<PyAny>,
+        _traceback: Py<PyAny>,
+    ) -> Result<(), Error> {
+        self.finalize()
     }
 
     pub fn get_report(&self) -> OutputReport {

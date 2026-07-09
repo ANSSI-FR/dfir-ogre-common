@@ -533,9 +533,12 @@ fn parse_field(
 fn parse_field_name(elem: &Element) -> Result<FieldName, Error> {
     let attributes = &elem.attributes;
     let input_name = attribute("input", elem)?;
-    let primary_key = attributes.get("primary_key").cloned();
-
-    let primary_key = primary_key.is_some();
+    let primary_key = attributes.get("primary_key").is_some_and(|value| {
+        !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "" | "false" | "0" | "n" | "no" | "off"
+        )
+    });
 
     let output_name = attributes.get("output").cloned();
 
@@ -945,6 +948,28 @@ mod tests {
         assert_eq!(output_fields[0].output_name(), "known");
         assert_eq!(output_fields[1].output_name(), "container");
         assert_eq!(output_fields[2].output_name(), "joined");
+    }
+
+    #[test]
+    fn primary_key_false_attribute_is_not_primary_key() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plugin parser="Test">
+   <mapping data_type="test">
+      <fields>
+         <field input="Id" output="id" parser="String" primary_key="false" />
+      </fields>
+   </mapping>
+</plugin>"#;
+
+        let config = PluginConfiguration::from_str(xml, None, None).unwrap();
+        let mapping = &config.data_type_configs[0];
+
+        assert!(!mapping.has_primary_key);
+        let field_mapping = mapping.field_mapping.as_ref().expect("field mapping");
+        let Field::Single { name, .. } = &field_mapping.field_parser_tree.output_fields[0] else {
+            panic!("expected single field");
+        };
+        assert!(!name.primary_key);
     }
 
     #[test]
