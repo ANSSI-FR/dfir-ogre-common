@@ -80,15 +80,22 @@ impl Value {
         date_codec: &DateOutputCodec,
         delimiter: char,
     ) -> Result<(), Error> {
-        let mut first = true;
-        for (_, val) in record.iter() {
-            if !first {
-                buffer.push(delimiter);
+        let start_len = buffer.len();
+        let result = (|| {
+            let mut first = true;
+            for (_, val) in record.iter() {
+                if !first {
+                    buffer.push(delimiter);
+                }
+                Value::csv_serialise_value(val, buffer, date_codec)?;
+                first = false;
             }
-            Value::csv_serialise_value(val, buffer, date_codec)?;
-            first = false;
+            Ok(())
+        })();
+        if result.is_err() {
+            buffer.truncate(start_len);
         }
-        Ok(())
+        result
     }
 
     /// Serializes a single `Value` to JSON, handling escaping, number formatting, and date conversion.
@@ -169,58 +176,65 @@ impl Value {
         buffer: &mut String,
         date_codec: &DateOutputCodec,
     ) -> Result<(), Error> {
-        match value {
-            Value::Null() => {}
-            Value::String(v) => {
-                let escaped = escape_special_chars_csv(v);
-                buffer.push('\"');
-                buffer.push_str(&escaped);
-                buffer.push('\"');
-            }
-            Value::Array(field_values) => {
-                buffer.push('"');
-                buffer.push('[');
-                let mut object_buf = String::new();
-                for (i, el) in field_values.iter().enumerate() {
-                    if i != 0 {
-                        buffer.push(',');
-                    }
-                    Value::json_serialise_value(el, &mut object_buf, date_codec, true)?;
-                    buffer.push_str(&escape_special_chars_csv(&object_buf));
-                    object_buf.clear();
+        let start_len = buffer.len();
+        let result = (|| {
+            match value {
+                Value::Null() => {}
+                Value::String(v) => {
+                    let escaped = escape_special_chars_csv(v);
+                    buffer.push('\"');
+                    buffer.push_str(&escaped);
+                    buffer.push('\"');
                 }
-                buffer.push(']');
-                buffer.push('"');
-            }
-            Value::Int(v) => {
-                buffer.push_str(&v.to_string());
-            }
-            Value::Float(v) => {
-                buffer.push_str(&v.to_string());
-            }
-            Value::Bool(v) => buffer.push_str(&v.to_string()),
-            Value::Date(date_time) => {
-                let v = serialize_date(date_time, date_codec);
-                buffer.push('\"');
-                buffer.push_str(&v);
-                buffer.push('\"');
-            }
+                Value::Array(field_values) => {
+                    buffer.push('"');
+                    buffer.push('[');
+                    let mut object_buf = String::new();
+                    for (i, el) in field_values.iter().enumerate() {
+                        if i != 0 {
+                            buffer.push(',');
+                        }
+                        Value::json_serialise_value(el, &mut object_buf, date_codec, true)?;
+                        buffer.push_str(&escape_special_chars_csv(&object_buf));
+                        object_buf.clear();
+                    }
+                    buffer.push(']');
+                    buffer.push('"');
+                }
+                Value::Int(v) => {
+                    buffer.push_str(&v.to_string());
+                }
+                Value::Float(v) => {
+                    buffer.push_str(&v.to_string());
+                }
+                Value::Bool(v) => buffer.push_str(&v.to_string()),
+                Value::Date(date_time) => {
+                    let v = serialize_date(date_time, date_codec);
+                    buffer.push('\"');
+                    buffer.push_str(&v);
+                    buffer.push('\"');
+                }
 
-            Value::Object(hash_map) => {
-                buffer.push('"');
-                let mut object_buf = String::new();
+                Value::Object(hash_map) => {
+                    buffer.push('"');
+                    let mut object_buf = String::new();
 
-                Value::json_serialise_record(hash_map, &mut object_buf, date_codec, true)?;
-                buffer.push_str(&escape_special_chars_csv(&object_buf));
-                buffer.push('"');
+                    Value::json_serialise_record(hash_map, &mut object_buf, date_codec, true)?;
+                    buffer.push_str(&escape_special_chars_csv(&object_buf));
+                    buffer.push('"');
+                }
+                Value::Metadata(metadata) => {
+                    buffer.push('\"');
+                    buffer.push_str(&escape_special_chars_csv(metadata.0.as_str()));
+                    buffer.push('\"');
+                }
             }
-            Value::Metadata(metadata) => {
-                buffer.push('\"');
-                buffer.push_str(&escape_special_chars_csv(metadata.0.as_str()));
-                buffer.push('\"');
-            }
+            Ok(())
+        })();
+        if result.is_err() {
+            buffer.truncate(start_len);
         }
-        Ok(())
+        result
     }
 
     /// Returns a compact string representation of the value, used by `Display`.

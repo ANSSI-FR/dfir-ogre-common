@@ -34,9 +34,7 @@ fn csv_serialise_record_with_extra_field(
 ) -> Result<(), Error> {
     let mut row = CsvRowWriter::new(buffer);
     for (_, value) in record.iter() {
-        let mut field = String::new();
-        Value::csv_serialise_value(value, &mut field, date_codec)?;
-        row.raw_field(&field);
+        row.try_raw_field(|buffer| Value::csv_serialise_value(value, buffer, date_codec))?;
     }
     extra_value.write_to_row(&mut row);
     Ok(())

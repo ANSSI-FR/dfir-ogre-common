@@ -126,6 +126,21 @@ impl<'a> CsvRowWriter<'a> {
         self.buffer.push_str(value);
     }
 
+    pub(crate) fn try_raw_field<F>(&mut self, write_value: F) -> Result<(), Error>
+    where
+        F: FnOnce(&mut String) -> Result<(), Error>,
+    {
+        let buffer_len = self.buffer.len();
+        let fields = self.fields;
+        self.write_delimiter();
+        if let Err(error) = write_value(self.buffer) {
+            self.buffer.truncate(buffer_len);
+            self.fields = fields;
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub(crate) fn quoted_field(&mut self, value: &str) {
         self.write_delimiter();
         self.buffer.push('"');
@@ -230,5 +245,23 @@ mod tests {
         row.optional_quoted_field(Some("c"));
 
         assert_eq!(buffer, r#""a""b";;"c""#);
+    }
+
+    #[test]
+    fn csv_row_writer_rolls_back_failed_raw_field() {
+        let mut buffer = String::new();
+        let result = {
+            let mut row = CsvRowWriter::new(&mut buffer);
+            row.quoted_field("first");
+            let result = row.try_raw_field(|buffer| {
+                buffer.push_str("partial");
+                Err(Error::PluginError("boom".to_owned()))
+            });
+            row.quoted_field("second");
+            result
+        };
+
+        assert!(matches!(result, Err(Error::PluginError(_))));
+        assert_eq!(buffer, r#""first";"second""#);
     }
 }
