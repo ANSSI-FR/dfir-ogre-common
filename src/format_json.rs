@@ -7,6 +7,7 @@ use crate::{
     output::OutputType,
     output_writer::{FileWriter, GzipWriter, Writer},
     serialise::JsonObjectWriter,
+    timeline::TimelineSerializationContext,
 };
 
 enum JsonExtraField<'a> {
@@ -199,14 +200,18 @@ impl JsonFormatter {
         let data = &line_builder.line_data;
 
         if self.include_timeline {
-            for mut timeline in data.timeline.clone() {
-                timeline.metadata = Some(self.serialized_metadata(&line_builder.metadata));
-                timeline.data = Some(data.data.clone());
+            let metadata = self.serialized_metadata(&line_builder.metadata);
+            for timeline in &data.timeline {
                 self.line_buffer.clear();
-                timeline.json_serialise(
+                timeline.json_serialise_with_context(
                     &mut self.line_buffer,
                     &self.output_date_codec,
                     self.include_empty,
+                    TimelineSerializationContext {
+                        metadata: Some(&metadata),
+                        data: Some(&data.data),
+                        metadata_id: timeline.metadata_id.as_deref(),
+                    },
                 )?;
                 self.line_buffer.push('\n');
                 self.data_writer.write(&mut self.line_buffer)?;
@@ -247,13 +252,17 @@ impl JsonFormatter {
         if self.include_timeline
             && let Some(timeline_writer) = &mut self.timeline_writer
         {
-            for mut timeline in data.timeline.clone() {
-                timeline.metadata_id = Some(line_builder.metadata_id.clone());
+            for timeline in &data.timeline {
                 self.line_buffer.clear();
-                timeline.json_serialise(
+                timeline.json_serialise_with_context(
                     &mut self.line_buffer,
                     &self.output_date_codec,
                     self.include_empty,
+                    TimelineSerializationContext {
+                        metadata: timeline.metadata.as_ref(),
+                        data: timeline.data.as_ref(),
+                        metadata_id: Some(&line_builder.metadata_id),
+                    },
                 )?;
                 self.line_buffer.push('\n');
                 timeline_writer.write(&mut self.line_buffer)?;
@@ -333,6 +342,29 @@ mod tests {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => panic!("failed to remove {}: {error}", path.display()),
         }
+    }
+
+    fn timeline_field_mapping_for_two_dates() -> FieldMapping {
+        FieldMapping::new(
+            vec![
+                Field::Single {
+                    name: FieldName::new("when_a".into(), false, None, None, None),
+                    parser: Parser::DateTime(DateInputCodec::Iso()),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("when_b".into(), false, None, None, None),
+                    parser: Parser::DateTime(DateInputCodec::Iso()),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("message".into(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+            ],
+            None,
+        )
     }
 
     /// Tests writing to a plain text file.
@@ -583,6 +615,137 @@ mod tests {
         assert_eq!(timeline_json["data_type"], "json_test");
         assert_eq!(timeline_json["data_id"], data_json["ogre_id"]);
         assert!(timeline_json["metadata_id"].as_str().unwrap().len() > 10);
+
+        remove_dir_if_exists(Path::new(output_folder));
+    }
+
+    #[test]
+    fn timeline_json_write_does_not_mutate_source_timelines() {
+        let output_folder = Path::new(TMP_FOLDER).join("test_json_timeline_no_mutation_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+        let output_folder = output_folder.to_str().unwrap();
+        let base_file_name = "test_json_timeline_no_mutation";
+        let data_path = Path::new(output_folder).join(format!("{base_file_name}.jsonl"));
+
+        let timeline_builder = TimeLineBuilder::new(
+            TimeLineType::Standard,
+            "json_test".to_string(),
+            100,
+            None,
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("host-json-timeline".into()),
+            Some(timeline_builder),
+            timeline_field_mapping_for_two_dates(),
+            false,
+            false,
+            true,
+        );
+        let mut output = JsonFormatter::new(
+            OutputType::File,
+            output_folder,
+            base_file_name,
+            DateOutputCodec::Iso(),
+            false,
+            true,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            false,
+        )
+        .unwrap();
+
+        let mut record = Record::new();
+        let timestamp_a =
+            crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        let timestamp_b =
+            crate::date_util::parse_date("2020-01-02T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        record.add("when_a", Value::Date(timestamp_a));
+        record.add("when_b", Value::Date(timestamp_b));
+        record.add("message", Value::String("Hello".to_owned()));
+        line_builder.build(&mut record).unwrap();
+
+        assert_eq!(line_builder.line_data.timeline.len(), 2);
+        output.write(&line_builder).unwrap();
+        output.close().unwrap();
+
+        for timeline in &line_builder.line_data.timeline {
+            assert!(timeline.metadata.is_none());
+            assert!(timeline.data.is_none());
+        }
+
+        let output_text = fs::read_to_string(&data_path).unwrap();
+        let lines: Vec<&str> = output_text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        for line in lines {
+            let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(parsed["metadata"]["computer"], "host-json-timeline");
+            assert_eq!(parsed["data"]["message"], "Hello");
+        }
+
+        remove_dir_if_exists(Path::new(output_folder));
+    }
+
+    #[test]
+    fn normalized_json_timeline_uses_formatter_metadata_id() {
+        let output_folder = Path::new(TMP_FOLDER).join("test_json_timeline_md_id_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+        let output_folder = output_folder.to_str().unwrap();
+        let base_file_name = "test_json_timeline_md_id";
+        let timeline_path = Path::new(output_folder).join(format!("{base_file_name}.tl.jsonl"));
+
+        let timeline_builder = TimeLineBuilder::new(
+            TimeLineType::Standard,
+            "json_test".to_string(),
+            100,
+            None,
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("host-json-timeline".into()),
+            Some(timeline_builder),
+            timeline_field_mapping_for_two_dates(),
+            true,
+            false,
+            true,
+        );
+        let mut output = JsonFormatter::new(
+            OutputType::File,
+            output_folder,
+            base_file_name,
+            DateOutputCodec::Iso(),
+            false,
+            true,
+            7,
+            FileReport {
+                ..Default::default()
+            },
+            true,
+        )
+        .unwrap();
+
+        let mut record = Record::new();
+        let timestamp_a =
+            crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        let timestamp_b =
+            crate::date_util::parse_date("2020-01-02T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        record.add("when_a", Value::Date(timestamp_a));
+        record.add("when_b", Value::Date(timestamp_b));
+        record.add("message", Value::String("Hello".to_owned()));
+        line_builder.build(&mut record).unwrap();
+        line_builder.line_data.timeline[0].metadata_id = Some("stale-md-id".to_owned());
+
+        output.write_normalized(&line_builder).unwrap();
+        output.close().unwrap();
+
+        let timeline_text = fs::read_to_string(&timeline_path).unwrap();
+        let first_line = timeline_text.lines().next().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(first_line).unwrap();
+        assert_eq!(parsed["metadata_id"], line_builder.metadata_id);
 
         remove_dir_if_exists(Path::new(output_folder));
     }
