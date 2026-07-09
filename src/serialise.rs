@@ -1,4 +1,6 @@
-use crate::{Error, escape_special_chars, format_csv::CSV_DELIMITER, value::escape_special_chars_csv};
+use crate::{
+    Error, escape_special_chars, format_csv::CSV_DELIMITER, value::escape_special_chars_csv,
+};
 
 pub(crate) struct JsonObjectWriter<'a> {
     buffer: &'a mut String,
@@ -84,17 +86,6 @@ impl<'a> JsonArrayWriter<'a> {
             buffer,
             elements: 0,
         }
-    }
-
-    pub(crate) fn element_raw<F>(&mut self, write_value: F)
-    where
-        F: FnOnce(&mut String),
-    {
-        if self.elements != 0 {
-            self.buffer.push(',');
-        }
-        self.elements += 1;
-        write_value(self.buffer);
     }
 
     pub(crate) fn try_element_raw<F>(&mut self, write_value: F) -> Result<(), Error>
@@ -205,12 +196,22 @@ mod tests {
         let mut buffer = String::from("prefix");
         let result = {
             let mut array = JsonArrayWriter::new(&mut buffer);
-            array.element_raw(|buffer| buffer.push_str("1"));
+            array
+                .try_element_raw(|buffer| {
+                    buffer.push('1');
+                    Ok(())
+                })
+                .unwrap();
             let result = array.try_element_raw(|buffer| {
                 buffer.push_str("partial");
                 Err(Error::PluginError("boom".to_owned()))
             });
-            array.element_raw(|buffer| buffer.push_str("2"));
+            array
+                .try_element_raw(|buffer| {
+                    buffer.push('2');
+                    Ok(())
+                })
+                .unwrap();
             array.finish();
             result
         };
