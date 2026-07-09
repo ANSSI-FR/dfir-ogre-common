@@ -14,7 +14,6 @@ use crate::{
     FieldName, Record, Value,
     date_util::DateOutputCodec,
     errors::Error,
-    escape_special_chars,
     format_csv::CSV_DELIMITER,
     metadata::MetadataSerialized,
     serialise::{CsvRowWriter, JsonObjectWriter},
@@ -64,39 +63,19 @@ impl TimeLine {
         }
 
         let mut object = JsonObjectWriter::new(buffer);
-        object.field_if("id", self.id.is_some(), |buffer| {
-            Self::write_json_string_value(self.id.as_deref().unwrap_or_default(), buffer);
-        });
-        object.field_if("computer", self.computer.is_some(), |buffer| {
-            Self::write_json_string_value(self.computer.as_deref().unwrap_or_default(), buffer);
-        });
-        object.field_raw("timestamp", |buffer| {
-            Self::write_json_string_value(&serialize_date(&self.timestamp, date_codec), buffer);
-        });
-        object.field_raw("timestamp_meaning", |buffer| {
-            Self::write_json_string_value(&self.timestamp_meaning, buffer);
-        });
-        object.field_raw("data_type", |buffer| {
-            Self::write_json_string_value(&self.data_type, buffer);
-        });
-        object.field_raw("related_user", |buffer| {
-            Self::write_json_string_value(&self.related_user, buffer);
-        });
-        object.field_raw("description", |buffer| {
-            Self::write_json_string_value(&self.description, buffer);
-        });
-        object.field_raw("additional_description", |buffer| {
-            Self::write_json_string_value(&self.additional_description, buffer);
-        });
-        object.field_if("metadata_id", self.metadata_id.is_some(), |buffer| {
-            Self::write_json_string_value(self.metadata_id.as_deref().unwrap_or_default(), buffer);
-        });
+        object.optional_string_field("id", self.id.as_deref());
+        object.optional_string_field("computer", self.computer.as_deref());
+        object.string_field("timestamp", &serialize_date(&self.timestamp, date_codec));
+        object.string_field("timestamp_meaning", &self.timestamp_meaning);
+        object.string_field("data_type", &self.data_type);
+        object.string_field("related_user", &self.related_user);
+        object.string_field("description", &self.description);
+        object.string_field("additional_description", &self.additional_description);
+        object.optional_string_field("metadata_id", self.metadata_id.as_deref());
         object.field_if("metadata", self.metadata.is_some(), |buffer| {
             buffer.push_str(self.metadata.as_ref().unwrap().0.as_str());
         });
-        object.field_if("data_id", self.data_id.is_some(), |buffer| {
-            Self::write_json_string_value(self.data_id.as_deref().unwrap_or_default(), buffer);
-        });
+        object.optional_string_field("data_id", self.data_id.as_deref());
         object.field_if("data", self.data.is_some(), |buffer| {
             buffer.push_str(&data_buffer);
         });
@@ -126,12 +105,6 @@ impl TimeLine {
         }
 
         self.id = Some(BASE64.encode(hasher.finalize().as_slice()));
-    }
-
-    fn write_json_string_value(value: &str, buffer: &mut String) {
-        buffer.push('\"');
-        buffer.push_str(&escape_special_chars(value));
-        buffer.push('\"');
     }
 
     pub fn csv_serialise(

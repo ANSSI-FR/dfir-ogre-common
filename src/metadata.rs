@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use pyo3::prelude::*;
 
 use crate::{
-    DateOutputCodec, escape_special_chars,
+    DateOutputCodec,
     format_csv::CSV_DELIMITER,
     serialise::{CsvRowWriter, JsonObjectWriter},
     serialize_date,
@@ -155,16 +155,8 @@ impl Metadata {
 
     pub fn json_serialise(&self, buffer: &mut String, date_codec: &DateOutputCodec) {
         let mut object = JsonObjectWriter::new(buffer);
-        object.field_raw("computer", |buffer| {
-            buffer.push('\"');
-            buffer.push_str(&escape_special_chars(&self.computer));
-            buffer.push('\"');
-        });
-        object.field_raw("data_type", |buffer| {
-            buffer.push('\"');
-            buffer.push_str(&escape_special_chars(&self.data_type));
-            buffer.push('\"');
-        });
+        object.string_field("computer", &self.computer);
+        object.string_field("data_type", &self.data_type);
         Self::serialise_json_string(&mut object, "id", &self.id);
         Self::serialise_json_string(&mut object, "orc_id", &self.orc_id);
         Self::serialise_json_string(&mut object, "folder", &self.folder);
@@ -194,11 +186,7 @@ impl Metadata {
         name: &str,
         value: &Option<String>,
     ) {
-        object.field_if(name, value.is_some(), |buffer| {
-            buffer.push('\"');
-            buffer.push_str(&escape_special_chars(value.as_deref().unwrap_or_default()));
-            buffer.push('\"');
-        });
+        object.optional_string_field(name, value.as_deref());
     }
 
     fn serialise_json_date(
@@ -207,11 +195,9 @@ impl Metadata {
         date: &Option<DateTime<Utc>>,
         date_codec: &DateOutputCodec,
     ) {
-        object.field_if(name, date.is_some(), |buffer| {
-            buffer.push('\"');
-            buffer.push_str(&serialize_date(date.as_ref().unwrap(), date_codec));
-            buffer.push('\"');
-        });
+        if let Some(date) = date {
+            object.string_field(name, &serialize_date(date, date_codec));
+        }
     }
 }
 #[cfg(test)]
