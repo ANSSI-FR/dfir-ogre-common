@@ -115,15 +115,6 @@ impl<'a> JsonArrayWriter<'a> {
         Ok(())
     }
 
-    pub(crate) fn element_if<F>(&mut self, should_emit: bool, write_value: F)
-    where
-        F: FnOnce(&mut String),
-    {
-        if should_emit {
-            self.element_raw(write_value);
-        }
-    }
-
     pub(crate) fn finish(self) {
         self.buffer.push(']');
     }

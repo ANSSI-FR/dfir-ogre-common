@@ -48,19 +48,23 @@ impl Value {
         date_codec: &DateOutputCodec,
         include_empty: bool,
     ) -> Result<(), Error> {
-        let mut object = JsonObjectWriter::new(buffer);
-        for (key, el) in record.iter() {
-            let should_emit = Self::should_emit_json_value(el, include_empty);
-            let mut value_buffer = String::new();
-            if should_emit {
-                Value::json_serialise_value(el, &mut value_buffer, date_codec, include_empty)?;
+        let start_len = buffer.len();
+        let result = (|| {
+            let mut object = JsonObjectWriter::new(buffer);
+            for (key, el) in record.iter() {
+                if Self::should_emit_json_value(el, include_empty) {
+                    object.try_field_raw(key, |buffer| {
+                        Value::json_serialise_value(el, buffer, date_codec, include_empty)
+                    })?;
+                }
             }
-            object.field_if(key, should_emit, |buffer| {
-                buffer.push_str(&value_buffer);
-            });
+            object.finish();
+            Ok(())
+        })();
+        if result.is_err() {
+            buffer.truncate(start_len);
         }
-        object.finish();
-        Ok(())
+        result
     }
 
     /// Serializes a `Record` to CSV, appending to `buffer`.
@@ -100,59 +104,58 @@ impl Value {
         date_codec: &DateOutputCodec,
         include_empty: bool,
     ) -> Result<(), Error> {
-        match value {
-            Value::Null() => {
-                if include_empty {
-                    buffer.push_str("null")
-                }
-            }
-            Value::String(v) => {
-                let escaped = escape_special_chars(v);
-                buffer.push('\"');
-                buffer.push_str(&escaped);
-                buffer.push('\"');
-            }
-            Value::Array(field_values) => {
-                let mut array = JsonArrayWriter::new(buffer);
-                for el in field_values {
-                    let should_emit = Self::should_emit_json_value(el, include_empty);
-                    let mut value_buffer = String::new();
-                    if should_emit {
-                        Value::json_serialise_value(
-                            el,
-                            &mut value_buffer,
-                            date_codec,
-                            include_empty,
-                        )?;
+        let start_len = buffer.len();
+        let result = (|| {
+            match value {
+                Value::Null() => {
+                    if include_empty {
+                        buffer.push_str("null")
                     }
-                    array.element_if(should_emit, |buffer| {
-                        buffer.push_str(&value_buffer);
-                    });
                 }
-                array.finish();
-            }
-            Value::Int(v) => {
-                buffer.push_str(&v.to_string());
-            }
-            Value::Float(v) => {
-                buffer.push_str(&v.to_string());
-            }
-            Value::Bool(v) => buffer.push_str(&v.to_string()),
-            Value::Date(date_time) => {
-                let v = serialize_date(date_time, date_codec);
-                buffer.push('\"');
-                buffer.push_str(&v);
-                buffer.push('\"');
-            }
+                Value::String(v) => {
+                    let escaped = escape_special_chars(v);
+                    buffer.push('\"');
+                    buffer.push_str(&escaped);
+                    buffer.push('\"');
+                }
+                Value::Array(field_values) => {
+                    let mut array = JsonArrayWriter::new(buffer);
+                    for el in field_values {
+                        if Self::should_emit_json_value(el, include_empty) {
+                            array.try_element_raw(|buffer| {
+                                Value::json_serialise_value(el, buffer, date_codec, include_empty)
+                            })?;
+                        }
+                    }
+                    array.finish();
+                }
+                Value::Int(v) => {
+                    buffer.push_str(&v.to_string());
+                }
+                Value::Float(v) => {
+                    buffer.push_str(&v.to_string());
+                }
+                Value::Bool(v) => buffer.push_str(&v.to_string()),
+                Value::Date(date_time) => {
+                    let v = serialize_date(date_time, date_codec);
+                    buffer.push('\"');
+                    buffer.push_str(&v);
+                    buffer.push('\"');
+                }
 
-            Value::Object(hash_map) => {
-                Value::json_serialise_record(hash_map, buffer, date_codec, include_empty)?;
+                Value::Object(hash_map) => {
+                    Value::json_serialise_record(hash_map, buffer, date_codec, include_empty)?;
+                }
+                Value::Metadata(metadata) => {
+                    buffer.push_str(&metadata.0);
+                }
             }
-            Value::Metadata(metadata) => {
-                buffer.push_str(&metadata.0);
-            }
+            Ok(())
+        })();
+        if result.is_err() {
+            buffer.truncate(start_len);
         }
-        Ok(())
+        result
     }
 
     /// Serializes a single `Value` to CSV, handling escaping, number formatting, and date conversion.
@@ -213,7 +216,7 @@ impl Value {
             }
             Value::Metadata(metadata) => {
                 buffer.push('\"');
-                buffer.push_str(&metadata.0);
+                buffer.push_str(&escape_special_chars_csv(metadata.0.as_str()));
                 buffer.push('\"');
             }
         }
@@ -434,6 +437,26 @@ mod tests {
         Value::json_serialise_value(&value, &mut buffer, &DateOutputCodec::Iso(), true).unwrap();
 
         assert_eq!(buffer, r#"[null,"a"]"#);
+    }
+
+    #[test]
+    fn metadata_csv_serialise_escapes_raw_json() {
+        use std::sync::Arc;
+
+        let raw_metadata = r#"{"computer":"host \"quoted\"","data_type":"evtx"}"#;
+        let value = Value::Metadata(MetadataSerialized(Arc::new(raw_metadata.to_owned())));
+        let mut buffer = String::new();
+
+        Value::csv_serialise_value(&value, &mut buffer, &DateOutputCodec::Iso()).unwrap();
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .delimiter(crate::format_csv::CSV_DELIMITER as u8)
+            .from_reader(buffer.as_bytes());
+        let record = reader.records().next().unwrap().unwrap();
+
+        assert_eq!(&record[0], raw_metadata);
+        assert_eq!(1, record.len());
     }
 
     // ---------------------------------------------------------------------
