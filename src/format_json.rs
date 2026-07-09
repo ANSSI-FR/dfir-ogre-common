@@ -35,20 +35,25 @@ fn json_serialise_record_with_extra_field(
     date_codec: &DateOutputCodec,
     include_empty: bool,
 ) -> Result<(), Error> {
-    let mut object = JsonObjectWriter::new(buffer);
-    for (key, value) in record.iter() {
-        let should_emit = include_empty || !matches!(value, Value::Null());
-        let mut value_buffer = String::new();
-        if should_emit {
-            Value::json_serialise_value(value, &mut value_buffer, date_codec, include_empty)?;
+    let start_len = buffer.len();
+    let result = (|| {
+        let mut object = JsonObjectWriter::new(buffer);
+        for (key, value) in record.iter() {
+            let should_emit = include_empty || !matches!(value, Value::Null());
+            if should_emit {
+                object.try_field_raw(key, |buffer| {
+                    Value::json_serialise_value(value, buffer, date_codec, include_empty)
+                })?;
+            }
         }
-        object.field_if(key, should_emit, |buffer| {
-            buffer.push_str(&value_buffer);
-        });
+        object.field_raw(extra_key, |buffer| extra_value.json_serialise(buffer));
+        object.finish();
+        Ok(())
+    })();
+    if result.is_err() {
+        buffer.truncate(start_len);
     }
-    object.field_raw(extra_key, |buffer| extra_value.json_serialise(buffer));
-    object.finish();
-    Ok(())
+    result
 }
 
 /// A writer for outputting structured data in JSONL (JSON Lines) format.
