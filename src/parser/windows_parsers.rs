@@ -354,7 +354,7 @@ impl ParserExtensionTrait for FileAttributesParser {
         "FileAttributesParser".to_string()
     }
 
-    fn parse(&self, input: &str, output_name: &str) -> Option<Vec<(String, Value)>> {
+    fn parse(&self, input: &str, _: &str) -> Option<Vec<(String, Value)>> {
         if input.is_empty() {
             return None;
         }
@@ -362,7 +362,7 @@ impl ParserExtensionTrait for FileAttributesParser {
         if input.starts_with("0x") || input.starts_with("-0x") {
             record.push((
                 self.default_field.output_name().to_string(),
-                Value::String(output_name.to_string()),
+                Value::String(input.to_owned()),
             ));
         } else {
             let mut data = self.data.clone();
@@ -441,5 +441,27 @@ impl ParserExtensionTrait for SignedHashParser {
 
     fn output_fields_names(&self) -> Vec<FieldName> {
         vec![self.md5.clone(), self.sha1.clone(), self.sha256.clone()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_attributes_parser_preserves_raw_hex_values() {
+        let parser = FileAttributesParser::new();
+
+        for input in ["0x00000020", "-0x00000020"] {
+            let record = parser.parse(input, "mapped_attributes").unwrap();
+
+            assert_eq!(
+                record,
+                vec![(
+                    "file_attribute_raw".to_owned(),
+                    Value::String(input.to_owned())
+                )]
+            );
+        }
     }
 }

@@ -116,7 +116,7 @@ fn parse(
         default_value: _,
     } = last_field
     {
-        name.input_name()
+        name.output_name()
     } else {
         return Err(Error::ConfigurationError(
             "last field must be a normal field (not an array, an object, etc.) ".to_string(),
@@ -204,7 +204,7 @@ fn parse(
 /// fields using regex patterns and constructing data records.
 ///
 /// # Arguments
-/// * `last_field` - Name of the last field in the schema
+/// * `last_field` - Output name of the last field in the schema
 /// * `field_map` - Mapping of field names to their parsers
 /// * `regex` - Regex pattern used for matching
 /// * `re` - Compiled regex object
@@ -320,6 +320,14 @@ mod tests {
     }
 
     fn regexp_plugin_config(regex: &str, fail_policy: &str) -> PluginConfiguration {
+        regexp_plugin_config_with_message_output(regex, fail_policy, None)
+    }
+
+    fn regexp_plugin_config_with_message_output(
+        regex: &str,
+        fail_policy: &str,
+        message_output: Option<&str>,
+    ) -> PluginConfiguration {
         let mut params = HashMap::new();
         params.insert("regex".to_owned(), regex.to_owned());
         params.insert("regexp_fail_policy".to_owned(), fail_policy.to_owned());
@@ -345,7 +353,13 @@ mod tests {
                             default_value: None,
                         },
                         Field::Single {
-                            name: FieldName::new("message".to_owned(), false, None, None, None),
+                            name: FieldName::new(
+                                "message".to_owned(),
+                                false,
+                                message_output.map(str::to_owned),
+                                None,
+                                None,
+                            ),
                             parser: Parser::String(),
                             default_value: None,
                         },
@@ -428,6 +442,56 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0]["message"], "started\ncontinued details");
         assert_eq!(lines[1]["message"], "next");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn merge_policy_appends_to_renamed_last_field() {
+        let output_folder = Path::new(".tmp").join("regexp_merge_renamed_field");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let input_path = output_folder.join("merge.log");
+        fs::write(
+            &input_path,
+            concat!(
+                "2026-01-01 INFO started\n",
+                "continued details\n",
+                "another detail\n",
+                "2026-01-02 WARN next\n"
+            ),
+        )
+        .unwrap();
+        let regex = r"^(?P<date>\d{4}-\d{2}-\d{2}) (?P<level>INFO|WARN) (?P<message>.*)";
+        let run_config = RunConfiguration::new(
+            vec![regexp_output_conf("merge_renamed", &output_folder)],
+            true,
+            None,
+        );
+        let plugin_config =
+            regexp_plugin_config_with_message_output(regex, "Merge", Some("event_message"));
+
+        let report = parse_regexp(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+            1000,
+        );
+
+        assert_eq!(report.last_error, None);
+        let jsonl = fs::read_to_string(output_folder.join("merge_renamed.mini_log.jsonl")).unwrap();
+        let lines: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            lines[0]["event_message"],
+            "started\ncontinued details\nanother detail"
+        );
+        assert!(lines[0].get("message").is_none());
+        assert_eq!(lines[1]["event_message"], "next");
 
         remove_dir_if_exists(&output_folder);
     }

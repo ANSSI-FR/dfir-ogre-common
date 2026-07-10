@@ -70,14 +70,15 @@ fn parse_json_internal(
     let mut output = Output::new(run_config, plugin_config, metadata, None)?;
     let mut multi_input_context = MultiInputContext::new(parser_tree.multi_input_group_count);
 
-    parse(
+    if let Err(error) = parse(
         json,
         &mut Record::new(),
         &mut output,
         &mut parser_tree,
         &mut multi_input_context,
-        &mut report,
-    );
+    ) {
+        report.add_error(error.to_string());
+    }
 
     runner::finalize_output(&mut output, &mut report);
     Ok(report)
@@ -107,24 +108,27 @@ fn parse_jsonl_internal(
     let mut report = RunReport::new();
     let mut record = Record::new();
     let mut multi_input_context = MultiInputContext::new(parser_tree.multi_input_group_count);
-    for line in reader.lines() {
+    for (line_number, line) in reader.lines().enumerate() {
         multi_input_context.clear();
         match line {
             Ok(line) => {
                 let json: Result<JsonValue, serde_json::Error> = serde_json::from_str(&line);
                 match json {
-                    Ok(json) => parse(
-                        json,
-                        &mut record,
-                        &mut output,
-                        &mut parser_tree,
-                        &mut multi_input_context,
-                        &mut report,
-                    ),
-                    Err(e) => report.add_error(format!("{e}")),
+                    Ok(json) => {
+                        if let Err(error) = parse(
+                            json,
+                            &mut record,
+                            &mut output,
+                            &mut parser_tree,
+                            &mut multi_input_context,
+                        ) {
+                            report.add_error(format!("Line {}: {error}", line_number + 1));
+                        }
+                    }
+                    Err(error) => report.add_error(format!("Line {}: {error}", line_number + 1)),
                 }
             }
-            Err(e) => report.add_error(e.to_string()),
+            Err(error) => report.add_error(format!("Line {}: {error}", line_number + 1)),
         }
         record.clear();
     }
@@ -138,30 +142,25 @@ fn parse(
     output: &mut Output,
     parser_tree: &mut FieldParserTree,
     multi_input_context: &mut MultiInputContext,
-    report: &mut RunReport,
-) {
+) -> Result<(), Error> {
     let parse_unknown = if let Some(Parser::Ignore()) = parser_tree.default_parser {
         false
     } else {
         !parser_tree.ignore_parsing
     };
 
-    if let JsonValue::Object(map) = json {
-        match parse_json_object(
-            map,
-            Some(parser_tree),
-            parse_unknown,
-            record,
-            multi_input_context,
-        ) {
-            Ok(()) => {
-                if let Err(e) = output.write(record) {
-                    report.add_error(e.to_string())
-                }
-            }
-            Err(e) => report.add_error(e.to_string()),
-        }
-    }
+    let JsonValue::Object(map) = json else {
+        return Err(Error::JsonNotAnObject("JSON value".to_owned()));
+    };
+
+    parse_json_object(
+        map,
+        Some(parser_tree),
+        parse_unknown,
+        record,
+        multi_input_context,
+    )?;
+    output.write(record)
 }
 
 fn parse_mapped_string_field(
@@ -637,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn json_top_level_non_object_writes_no_records() {
+    fn json_top_level_non_object_reports_error_and_writes_no_records() {
         let output_folder = test_folder("json_top_level_non_object");
         let input_path = output_folder.join("array.json");
         fs::write(&input_path, r#"[{"event":"ignored"}]"#).unwrap();
@@ -652,10 +651,95 @@ mod tests {
             Metadata::new("test".into()),
         );
 
-        assert_eq!(report.last_error, None);
+        assert_eq!(report.num_errors, 1);
+        assert!(
+            report.last_error.as_deref().is_some_and(
+                |error| error.contains("JSON value") && error.contains("not an object")
+            )
+        );
         assert_eq!(report.output_reports[0].file_reports[0].num_lines, 0);
         let jsonl = fs::read_to_string(output_folder.join("array.json_edge.jsonl")).unwrap();
         assert!(jsonl.is_empty());
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn jsonl_non_object_reports_line_error_and_continues() {
+        let output_folder = test_folder("jsonl_non_object");
+        let input_path = output_folder.join("input.jsonl");
+        fs::write(
+            &input_path,
+            "{\"event\":\"first\"}\n[1, 2, 3]\n{\"event\":\"second\"}\n",
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![output_conf("objects", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_edge", simple_event_mapping());
+
+        let report = parse_jsonl(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.num_errors, 1);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("Line 2") && error.contains("not an object"))
+        );
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 2);
+
+        let jsonl = fs::read_to_string(output_folder.join("objects.json_edge.jsonl")).unwrap();
+        let lines: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines[0]["event"], "first");
+        assert_eq!(lines[1]["event"], "second");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn jsonl_container_type_mismatches_report_errors_and_continue() {
+        let output_folder = test_folder("jsonl_container_type_mismatches");
+        let input_path = output_folder.join("input.jsonl");
+        fs::write(
+            &input_path,
+            concat!(
+                "{\"event\":\"bad object\",\"details\":\"alice\",\"items\":[]}\n",
+                "{\"event\":\"bad array\",\"details\":{},\"items\":{}}\n",
+                "{\"event\":\"valid\",\"details\":{},\"items\":[]}\n"
+            ),
+        )
+        .unwrap();
+        let run_config =
+            RunConfiguration::new(vec![output_conf("containers", &output_folder)], true, None);
+        let plugin_config = json_plugin_config("json_edge", nested_json_mapping());
+
+        let report = parse_jsonl(
+            input_path.to_str().unwrap(),
+            run_config,
+            plugin_config,
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.num_errors, 2);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .is_some_and(|error| error.contains("Line 2") && error.contains("Array"))
+        );
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+
+        let jsonl = fs::read_to_string(output_folder.join("containers.json_edge.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(jsonl.trim()).unwrap();
+        assert_eq!(line["event"], "valid");
 
         remove_dir_if_exists(&output_folder);
     }

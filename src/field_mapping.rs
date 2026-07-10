@@ -647,9 +647,10 @@ impl FieldParserTree {
     ///
     /// The method resolves the appropriate parser for `input_name`. For a plain
     /// `ParserType::Field`, it forwards the value to that field's `set_value`.
-    /// For arrays, it extracts the inner `Field` parser and stores the value,
-    /// unless the array nests another array (which is unsupported). When the
-    /// parser represents an object, the method adds the value under the object's
+    /// For arrays, it first requires an array or null value, then extracts the
+    /// inner `Field` parser and stores the value, unless the array nests another
+    /// array (which is unsupported). When the parser represents an object, the
+    /// method requires an object or null value before adding it under the object's
     /// output name. If no dedicated parser exists, the value is stored using the
     /// raw `input_name` as the key.
     pub fn set_field_value(
@@ -662,20 +663,36 @@ impl FieldParserTree {
         match parser {
             Some(parser_type) => match parser_type {
                 ParserType::Field { parser } => parser.set_value(value, record),
-                ParserType::Array { field } => match field.0.as_ref() {
-                    ParserType::Field { parser } => parser.set_value(value, record),
+                ParserType::Array { field } => {
+                    if !matches!(&value, Value::Array(_) | Value::Null()) {
+                        return Err(Error::ValueTypeInvalid(
+                            input_name.to_string(),
+                            "Array".to_string(),
+                        ));
+                    }
 
-                    ParserType::Object { field_parsers } => {
-                        if let Some(field) = &field_parsers.field_name {
-                            record.add(field.output_name(), value)
+                    match field.0.as_ref() {
+                        ParserType::Field { parser } => parser.set_value(value, record),
+
+                        ParserType::Object { field_parsers } => {
+                            if let Some(field) = &field_parsers.field_name {
+                                record.add(field.output_name(), value)
+                            }
+                            Ok(())
                         }
-                        Ok(())
+                        ParserType::Array { field: _ } => {
+                            Err(Error::UnsupportedNestingArray(input_name.to_string()))
+                        }
                     }
-                    ParserType::Array { field: _ } => {
-                        Err(Error::UnsupportedNestingArray(input_name.to_string()))
-                    }
-                },
+                }
                 ParserType::Object { field_parsers } => {
+                    if !matches!(&value, Value::Object(_) | Value::Null()) {
+                        return Err(Error::ValueTypeInvalid(
+                            input_name.to_string(),
+                            "Object".to_string(),
+                        ));
+                    }
+
                     if let Some(field) = &field_parsers.field_name {
                         record.add(field.output_name(), value)
                     }
@@ -981,7 +998,7 @@ mod tests {
     }
 
     #[test]
-    fn set_field_value_handles_array_mapped_objects() {
+    fn set_field_value_accepts_array_for_array_mapped_objects() {
         let mapping = FieldMapping::new(
             vec![Field::Array(ArrayField(Box::new(Field::Object {
                 name: FieldName::new(
@@ -1011,10 +1028,89 @@ mod tests {
         let mut item = Record::new();
         item.add("name", Value::String("first".to_owned()));
 
-        tree.set_field_value("Items", Value::Object(item.clone()), &mut record)
+        tree.set_field_value(
+            "Items",
+            Value::Array(vec![Value::Object(item.clone())]),
+            &mut record,
+        )
+        .unwrap();
+
+        assert_eq!(
+            record.get("items"),
+            Some(&Value::Array(vec![Value::Object(item)]))
+        );
+    }
+
+    #[test]
+    fn set_field_value_rejects_object_for_array_mapping() {
+        let mapping = FieldMapping::new(
+            vec![Field::Array(ArrayField(Box::new(Field::Object {
+                name: FieldName::new("Items".to_owned(), false, None, None, None),
+                ignore: false,
+                fields: vec![],
+            })))],
+            None,
+        );
+        let tree = mapping.get_field_parser_tree();
+        let mut record = Record::new();
+
+        let error = tree
+            .set_field_value("Items", Value::Object(Record::new()), &mut record)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::ValueTypeInvalid(name, expected)
+                if name == "Items" && expected == "Array"
+        ));
+        assert!(record.is_empty());
+    }
+
+    #[test]
+    fn set_field_value_rejects_string_for_object_mapping() {
+        let mapping = FieldMapping::new(field_mapping(), None);
+        let tree = mapping.get_field_parser_tree();
+        let mut record = Record::new();
+
+        let error = tree
+            .set_field_value("System", Value::String("invalid".to_owned()), &mut record)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::ValueTypeInvalid(name, expected)
+                if name == "System" && expected == "Object"
+        ));
+        assert!(record.is_empty());
+    }
+
+    #[test]
+    fn set_field_value_allows_null_for_container_mappings() {
+        let mapping = FieldMapping::new(
+            vec![
+                Field::Object {
+                    name: FieldName::new("Details".to_owned(), false, None, None, None),
+                    ignore: false,
+                    fields: vec![],
+                },
+                Field::Array(ArrayField(Box::new(Field::Single {
+                    name: FieldName::new("Items".to_owned(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                }))),
+            ],
+            None,
+        );
+        let tree = mapping.get_field_parser_tree();
+        let mut record = Record::new();
+
+        tree.set_field_value("Details", Value::Null(), &mut record)
+            .unwrap();
+        tree.set_field_value("Items", Value::Null(), &mut record)
             .unwrap();
 
-        assert_eq!(record.get("items"), Some(&Value::Object(item)));
+        assert_eq!(record.get("Details"), Some(&Value::Null()));
+        assert_eq!(record.get("Items"), Some(&Value::Null()));
     }
 
     #[test]
