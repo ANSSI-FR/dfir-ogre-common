@@ -1,4 +1,4 @@
-use std::{fs::OpenOptions, io::Write, path::Path, sync::Arc};
+use std::{fs::OpenOptions, path::Path, sync::Arc};
 
 use crate::{
     Error, FieldMapping, FileReport, Metadata, Record, Value,
@@ -11,6 +11,32 @@ use crate::{
     timeline::{TimeLine, TimelineSerializationContext},
 };
 pub const CSV_DELIMITER: char = ';';
+
+fn open_writer(
+    path: &Path,
+    output_type: &OutputType,
+    compression_level: u32,
+    header: Option<String>,
+) -> Result<Box<dyn Writer + Send + Sync>, Error> {
+    let file = OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create(true)
+        .open(path)?;
+    let is_empty = file.metadata()?.len() == 0;
+
+    let mut writer: Box<dyn Writer + Send + Sync> = match output_type {
+        OutputType::File => Box::new(FileWriter::new(file)),
+        OutputType::Gzip => Box::new(GzipWriter::new(file, compression_level)),
+    };
+
+    if is_empty && let Some(mut header) = header {
+        header.push('\n');
+        writer.write(&mut header)?;
+    }
+
+    Ok(writer)
+}
 
 enum CsvExtraField<'a> {
     Metadata(&'a MetadataSerialized),
@@ -58,6 +84,8 @@ pub struct CsvFormatter {
     output_date_codec: DateOutputCodec,
     include_empty: bool,
     pub file_report: FileReport,
+    metadata_file_report: Option<FileReport>,
+    timeline_file_report: Option<FileReport>,
     include_timeline: bool,
 }
 impl CsvFormatter {
@@ -78,67 +106,42 @@ impl CsvFormatter {
             OutputType::File => Path::new(&output_folder).join(format!("{file_name}.csv")),
             OutputType::Gzip => Path::new(&output_folder).join(format!("{file_name}.csv.gz")),
         };
-        let full_path_name = file_path.display().to_string();
-        file_report.file_name = full_path_name;
+        let report_template = file_report.clone();
+        file_report.file_name = file_path.display().to_string();
 
-        //check that the file exist or not before opening it. it is used to decide whether to write the header
-        let file_exists = file_path.exists();
-
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(file_path)?;
-
-        //write csv headers if the file is empty
-        if !file_exists && let Some(mapping) = field_mapping {
+        let header = if let Some(mapping) = field_mapping {
             let mut header = String::new();
             if include_timeline && !normalized {
                 TimeLine::csv_serialise_header(&mut header, normalized)
             } else {
                 build_standard_header(&mut header, normalized, mapping)?;
             }
-            header.push('\n');
-            file.write_all(header.as_bytes())?;
-        }
-
-        let data_writer: Box<dyn Writer + Send + Sync> = match output_type {
-            OutputType::File => Box::new(FileWriter::new(file)),
-            OutputType::Gzip => Box::new(GzipWriter::new(file, compression_level)),
+            Some(header)
+        } else {
+            None
         };
+        let data_writer = open_writer(&file_path, &output_type, compression_level, header)?;
 
         //create a metadata file writer if the output is normalized
-        let metadata_writer = match normalized {
+        let (metadata_writer, metadata_file_report) = match normalized {
             true => {
                 let file_path = match output_type {
                     OutputType::File => Path::new(&output_folder).join("ogre_metadata.csv"),
                     OutputType::Gzip => Path::new(&output_folder).join("ogre_metadata.csv.gz"),
                 };
-                let file_exists = file_path.exists();
-                let mut file = OpenOptions::new()
-                    .read(true)
-                    .append(true)
-                    .create(true)
-                    .open(file_path)?;
-
-                if !file_exists {
-                    let mut header = String::new();
-                    Metadata::csv_serialise_header(&mut header);
-                    header.push('\n');
-                    file.write_all(header.as_bytes())?;
-                }
-
-                let metadata_writer: Box<dyn Writer + Send + Sync> = match output_type {
-                    OutputType::File => Box::new(FileWriter::new(file)),
-                    OutputType::Gzip => Box::new(GzipWriter::new(file, compression_level)),
-                };
-                Some(metadata_writer)
+                let mut header = String::new();
+                Metadata::csv_serialise_header(&mut header);
+                let metadata_writer =
+                    open_writer(&file_path, &output_type, compression_level, Some(header))?;
+                let mut metadata_file_report = report_template.clone();
+                metadata_file_report.file_name = file_path.display().to_string();
+                (Some(metadata_writer), Some(metadata_file_report))
             }
-            false => None,
+            false => (None, None),
         };
 
         //create a timeline file writer if the output is normalized
-        let timeline_writer = match normalized {
+        let (timeline_writer, timeline_file_report) = match normalized {
             true => {
                 if include_timeline {
                     let file_path = match output_type {
@@ -149,30 +152,18 @@ impl CsvFormatter {
                             Path::new(&output_folder).join(format!("{file_name}.tl.csv.gz"))
                         }
                     };
-                    let file_exists = file_path.exists();
-                    let mut file = OpenOptions::new()
-                        .read(true)
-                        .append(true)
-                        .create(true)
-                        .open(file_path)?;
-
-                    if !file_exists {
-                        let mut header = String::new();
-                        TimeLine::csv_serialise_header(&mut header, normalized);
-                        header.push('\n');
-                        file.write_all(header.as_bytes())?;
-                    }
-
-                    let timeline_writer: Box<dyn Writer + Send + Sync> = match output_type {
-                        OutputType::File => Box::new(FileWriter::new(file)),
-                        OutputType::Gzip => Box::new(GzipWriter::new(file, compression_level)),
-                    };
-                    Some(timeline_writer)
+                    let mut header = String::new();
+                    TimeLine::csv_serialise_header(&mut header, normalized);
+                    let timeline_writer =
+                        open_writer(&file_path, &output_type, compression_level, Some(header))?;
+                    let mut timeline_file_report = report_template;
+                    timeline_file_report.file_name = file_path.display().to_string();
+                    (Some(timeline_writer), Some(timeline_file_report))
                 } else {
-                    None
+                    (None, None)
                 }
             }
-            false => None,
+            false => (None, None),
         };
 
         Ok(Self {
@@ -184,6 +175,8 @@ impl CsvFormatter {
             output_date_codec,
             include_empty,
             file_report,
+            metadata_file_report,
+            timeline_file_report,
             include_timeline,
         })
     }
@@ -249,6 +242,10 @@ impl CsvFormatter {
 
             self.line_buffer.push('\n');
             writer.write(&mut self.line_buffer)?;
+            self.metadata_file_report
+                .as_mut()
+                .expect("metadata writer requires a file report")
+                .num_lines += 1;
         }
         Ok(())
     }
@@ -273,7 +270,10 @@ impl CsvFormatter {
                 )?;
                 self.line_buffer.push('\n');
                 timeline_writer.write(&mut self.line_buffer)?;
-                self.file_report.num_lines += 1;
+                self.timeline_file_report
+                    .as_mut()
+                    .expect("timeline writer requires a file report")
+                    .num_lines += 1;
             }
         }
 
@@ -287,10 +287,15 @@ impl CsvFormatter {
 
         self.line_buffer.push('\n');
         self.data_writer.write(&mut self.line_buffer)?;
-        if !self.include_timeline {
-            self.file_report.num_lines += 1;
-        }
+        self.file_report.num_lines += 1;
         Ok(())
+    }
+
+    pub fn reports(&self) -> Vec<FileReport> {
+        let mut reports = vec![self.file_report.clone()];
+        reports.extend(self.metadata_file_report.clone());
+        reports.extend(self.timeline_file_report.clone());
+        reports
     }
 
     /// Closes the output stream and ensures all buffered data is written and flushed.
@@ -364,6 +369,16 @@ mod tests {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => panic!("failed to remove {}: {error}", path.display()),
         }
+    }
+
+    fn read_gzip(path: &Path) -> String {
+        let bytes = fs::read(path).unwrap();
+        assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+
+        let mut decoder = MultiGzDecoder::new(bytes.as_slice());
+        let mut decoded = String::new();
+        decoder.read_to_string(&mut decoded).unwrap();
+        decoded
     }
 
     fn timeline_field_mapping_for_two_dates() -> FieldMapping {
@@ -722,6 +737,87 @@ mod tests {
     }
 
     #[test]
+    fn normalized_gzip_compresses_data_metadata_and_timeline_headers() {
+        let output_folder = Path::new(TMP_FOLDER).join("test_normalized_csv_gzip_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+        let output_folder_str = output_folder.to_str().unwrap();
+        let base_file_name = "test_normalized_csv_gzip";
+        let field_mapping = timeline_field_mapping_for_two_dates();
+        let timeline_builder = TimeLineBuilder::new(
+            crate::TimeLineType::Standard,
+            "csv_test".to_string(),
+            100,
+            None,
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("host-csv-gzip".into()),
+            Some(timeline_builder),
+            field_mapping.clone(),
+            true,
+            false,
+            true,
+        );
+        let mut output = CsvFormatter::new(
+            Some(field_mapping),
+            OutputType::Gzip,
+            output_folder_str,
+            base_file_name,
+            DateOutputCodec::Iso(),
+            false,
+            true,
+            7,
+            FileReport::default(),
+            true,
+        )
+        .unwrap();
+
+        let mut record = Record::new();
+        let timestamp_a =
+            crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        let timestamp_b =
+            crate::date_util::parse_date("2020-01-02T00:00:00Z", &DateInputCodec::Iso()).unwrap();
+        record.add("when_a", Value::Date(timestamp_a));
+        record.add("when_b", Value::Date(timestamp_b));
+        record.add("message", Value::String("Hello".to_owned()));
+        line_builder.build(&mut record).unwrap();
+
+        output.write_metadata(&line_builder).unwrap();
+        output.write_normalized(&line_builder).unwrap();
+        let reports = output.reports();
+        assert_eq!(reports.len(), 3);
+        assert_eq!(reports[0].num_lines, 1);
+        assert!(
+            reports[0]
+                .file_name
+                .ends_with("test_normalized_csv_gzip.csv.gz")
+        );
+        assert_eq!(reports[1].num_lines, 1);
+        assert!(reports[1].file_name.ends_with("ogre_metadata.csv.gz"));
+        assert_eq!(reports[2].num_lines, 2);
+        assert!(
+            reports[2]
+                .file_name
+                .ends_with("test_normalized_csv_gzip.tl.csv.gz")
+        );
+        output.close().unwrap();
+
+        let data = read_gzip(&output_folder.join(format!("{base_file_name}.csv.gz")));
+        let metadata = read_gzip(&output_folder.join("ogre_metadata.csv.gz"));
+        let timeline = read_gzip(&output_folder.join(format!("{base_file_name}.tl.csv.gz")));
+
+        assert_eq!(data.lines().count(), 2);
+        assert_eq!(metadata.lines().count(), 2);
+        assert_eq!(timeline.lines().count(), 3);
+        assert!(data.starts_with("when_a;when_b;message;ogre_id;ogre_md_id\n"));
+        assert!(metadata.starts_with("computer;data_type;id;"));
+        assert!(timeline.starts_with("id;computer;timestamp;"));
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
     fn normalized_output() {
         let output_folder = Path::new(TMP_FOLDER).join("test_normalized_csv_dir");
         remove_dir_if_exists(&output_folder);
@@ -817,9 +913,9 @@ mod tests {
             assert_eq!(&rec[1], "Hello");
             assert_eq!(&rec[2], "World");
             ogre_id = rec[3].to_string();
-            assert_eq!(&ogre_id, "tPjWKRUqieooGSn41rVtQwfBeQWVZMdOgq7hrljKFiw=");
+            assert_eq!(&ogre_id, "oGsnmVDx0hRcY8yUjKTLNbQIbNHeci9vLvp8UWfuJeU=");
             ogre_md_id = rec[4].to_string();
-            assert_eq!(&ogre_md_id, "0RVO5ZEk8Boz0DZLlxBkf_QYgNKxsYh1_XaFMYmmZG8=");
+            assert_eq!(&ogre_md_id, "7E--LvjAPLv1UvYZXDmzbzruAvf220l54E--U90Tsbs=");
         }
         assert_eq!(1, line_number);
 
@@ -834,7 +930,7 @@ mod tests {
             line_number = line_nb + 1;
             let rec = record.unwrap();
             assert_eq!(10, rec.len());
-            assert_eq!(&rec[0], "78ZJGoMrbvyf6ErSNyFPpZeXpM7lqyLgFutONi6ACjQ=");
+            assert_eq!(&rec[0], "dQLXSFgmnMWoIHZFiNXCH_9eU8Yxvav8pVGhL0NIji4=");
             assert_eq!(&rec[1], "test");
             assert_eq!(&rec[2], "2020-01-01T00:00:00.000000+00:00");
             assert_eq!(&rec[3], "when");
@@ -843,9 +939,9 @@ mod tests {
             assert_eq!(&rec[6], "");
             assert_eq!(&rec[7], "");
             tl_ogre_md_id = rec[8].to_string();
-            assert_eq!(&ogre_md_id, "0RVO5ZEk8Boz0DZLlxBkf_QYgNKxsYh1_XaFMYmmZG8=");
+            assert_eq!(&ogre_md_id, "7E--LvjAPLv1UvYZXDmzbzruAvf220l54E--U90Tsbs=");
             tl_ogre_id = rec[9].to_string();
-            assert_eq!(&ogre_id, "tPjWKRUqieooGSn41rVtQwfBeQWVZMdOgq7hrljKFiw=");
+            assert_eq!(&ogre_id, "oGsnmVDx0hRcY8yUjKTLNbQIbNHeci9vLvp8UWfuJeU=");
         }
         assert_eq!(1, line_number);
         assert_eq!(tl_ogre_id, ogre_id);

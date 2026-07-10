@@ -14,6 +14,7 @@ use pyo3::prelude::*;
 use crate::{
     DateOutputCodec,
     format_csv::CSV_DELIMITER,
+    hash_util,
     serialise::{CsvRowWriter, JsonObjectWriter},
     serialize_date,
 };
@@ -61,34 +62,32 @@ impl Metadata {
 impl Metadata {
     /// Hashes all metadata fields (except id) into the supplied `hasher` to create a unique identifier.
     pub fn compute_id(&self, hasher: &mut Hasher) {
-        hasher.update(self.computer.as_bytes());
-        hasher.update(self.data_type.as_bytes());
-        Metadata::update_hash_string(&self.orc_id, hasher);
-        Metadata::update_hash_string(&self.folder, hasher);
-        Metadata::update_hash_string(&self.archive, hasher);
-        Metadata::update_hash_string(&self.subarchive, hasher);
-        Metadata::update_hash_string(&self.archive_filename, hasher);
-        Metadata::update_hash_string(&self.original_filename, hasher);
-        Metadata::update_hash_string(&self.vss, hasher);
-        Metadata::update_hash_date(&self.orc_start_date, hasher);
-        Metadata::update_hash_date(&self.creation_date, hasher);
-        Metadata::update_hash_date(&self.modif_date, hasher);
-    }
+        hash_util::start(hasher, "metadata");
+        hash_util::write_field(hasher, "computer");
+        hash_util::write_str(hasher, &self.computer);
+        hash_util::write_field(hasher, "data_type");
+        hash_util::write_str(hasher, &self.data_type);
 
-    /// Helper for hashing optional string fields.
-    fn update_hash_string(value: &Option<String>, hasher: &mut Hasher) {
-        hasher.update(value.as_ref().unwrap_or(&"null".to_owned()).as_bytes());
-    }
+        for (name, value) in [
+            ("orc_id", &self.orc_id),
+            ("folder", &self.folder),
+            ("archive", &self.archive),
+            ("subarchive", &self.subarchive),
+            ("archive_filename", &self.archive_filename),
+            ("original_filename", &self.original_filename),
+            ("vss", &self.vss),
+        ] {
+            hash_util::write_field(hasher, name);
+            hash_util::write_option_str(hasher, value.as_deref());
+        }
 
-    /// Helper for hashing optional `DateTime<Utc>` fields.
-    fn update_hash_date(value: &Option<DateTime<Utc>>, hasher: &mut Hasher) {
-        if let Some(date_time) = value
-            && let Some(nanos) = date_time.timestamp_nanos_opt()
-        {
-            hasher.update(&nanos.to_ne_bytes());
-        } else {
-            // Hash a zero value if the timestamp is missing or out‑of‑range.
-            hasher.update(&0i64.to_ne_bytes());
+        for (name, value) in [
+            ("orc_start_date", &self.orc_start_date),
+            ("creation_date", &self.creation_date),
+            ("modif_date", &self.modif_date),
+        ] {
+            hash_util::write_field(hasher, name);
+            hash_util::write_option_date(hasher, value.as_ref());
         }
     }
 
@@ -259,6 +258,26 @@ mod tests {
     }
 
     #[test]
+    fn compute_id_frames_fields_and_optional_values() {
+        fn hash(metadata: &Metadata) -> blake3::Hash {
+            let mut hasher = blake3::Hasher::new();
+            metadata.compute_id(&mut hasher);
+            hasher.finalize()
+        }
+
+        let mut split_first = Metadata::new("ab".to_owned());
+        split_first.data_type = "c".to_owned();
+        let mut split_second = Metadata::new("a".to_owned());
+        split_second.data_type = "bc".to_owned();
+        assert_ne!(hash(&split_first), hash(&split_second));
+
+        let missing = Metadata::new("host".to_owned());
+        let mut literal_null = missing.clone();
+        literal_null.orc_id = Some("null".to_owned());
+        assert_ne!(hash(&missing), hash(&literal_null));
+    }
+
+    #[test]
     fn write_csv_header_outputs_correct_fields_in_order() {
         let mut buffer = String::new();
         Metadata::csv_serialise_header(&mut buffer);
@@ -328,7 +347,7 @@ mod tests {
 
             assert_eq!(&rec[0], "host1");
             assert_eq!(&rec[1], "evtx");
-            assert_eq!(&rec[2], "BSMNxNN828nzRZdQ8YnttEJAAQfy37suyDCbQvzWm8U=");
+            assert_eq!(&rec[2], "LgVEP4ZRC2uZgautyFC4KKO6bGhJJAup69239UZZzTs=");
             assert_eq!(&rec[3], "");
             assert_eq!(&rec[4], "folder");
             assert_eq!(&rec[5], "");

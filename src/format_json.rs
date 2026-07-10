@@ -76,6 +76,8 @@ pub struct JsonFormatter {
     include_empty: bool,
     include_timeline: bool,
     pub file_report: FileReport,
+    metadata_file_report: Option<FileReport>,
+    timeline_file_report: Option<FileReport>,
 }
 
 impl JsonFormatter {
@@ -112,6 +114,7 @@ impl JsonFormatter {
             OutputType::File => Path::new(&output_folder).join(format!("{file_name}.jsonl")),
             OutputType::Gzip => Path::new(&output_folder).join(format!("{file_name}.jsonl.gz")),
         };
+        let report_template = file_report.clone();
         file_report.file_name = file_path.display().to_string();
 
         let file = OpenOptions::new()
@@ -125,52 +128,66 @@ impl JsonFormatter {
             OutputType::Gzip => Box::new(GzipWriter::new(file, compression_level)),
         };
 
-        let (metadata_writer, timeline_writer) = match normalized {
-            true => {
-                let metadata_file_path = match output_type {
-                    OutputType::File => Path::new(&output_folder).join("ogre_metadata.jsonl"),
-                    OutputType::Gzip => Path::new(&output_folder).join("ogre_metadata.jsonl.gz"),
-                };
-                let metadata_file = OpenOptions::new()
-                    .read(true)
-                    .append(true)
-                    .create(true)
-                    .open(metadata_file_path)?;
-
-                let metadata_writer: Box<dyn Writer + Send + Sync> = match output_type {
-                    OutputType::File => Box::new(FileWriter::new(metadata_file)),
-                    OutputType::Gzip => Box::new(GzipWriter::new(metadata_file, compression_level)),
-                };
-                let timeline_writer = if include_timeline {
-                    let timeline_file_path = match output_type {
-                        OutputType::File => {
-                            Path::new(&output_folder).join(format!("{file_name}.tl.jsonl"))
-                        }
+        let (metadata_writer, metadata_file_report, timeline_writer, timeline_file_report) =
+            match normalized {
+                true => {
+                    let metadata_file_path = match output_type {
+                        OutputType::File => Path::new(&output_folder).join("ogre_metadata.jsonl"),
                         OutputType::Gzip => {
-                            Path::new(&output_folder).join(format!("{file_name}.tl.jsonl.gz"))
+                            Path::new(&output_folder).join("ogre_metadata.jsonl.gz")
                         }
                     };
-                    let timeline_file = OpenOptions::new()
+                    let metadata_file = OpenOptions::new()
                         .read(true)
                         .append(true)
                         .create(true)
-                        .open(timeline_file_path)?;
+                        .open(&metadata_file_path)?;
 
-                    let timeline_writer: Box<dyn Writer + Send + Sync> = match output_type {
-                        OutputType::File => Box::new(FileWriter::new(timeline_file)),
+                    let metadata_writer: Box<dyn Writer + Send + Sync> = match output_type {
+                        OutputType::File => Box::new(FileWriter::new(metadata_file)),
                         OutputType::Gzip => {
-                            Box::new(GzipWriter::new(timeline_file, compression_level))
+                            Box::new(GzipWriter::new(metadata_file, compression_level))
                         }
                     };
-                    Some(timeline_writer)
-                } else {
-                    None
-                };
+                    let mut metadata_file_report = report_template.clone();
+                    metadata_file_report.file_name = metadata_file_path.display().to_string();
+                    let (timeline_writer, timeline_file_report) = if include_timeline {
+                        let timeline_file_path = match output_type {
+                            OutputType::File => {
+                                Path::new(&output_folder).join(format!("{file_name}.tl.jsonl"))
+                            }
+                            OutputType::Gzip => {
+                                Path::new(&output_folder).join(format!("{file_name}.tl.jsonl.gz"))
+                            }
+                        };
+                        let timeline_file = OpenOptions::new()
+                            .read(true)
+                            .append(true)
+                            .create(true)
+                            .open(&timeline_file_path)?;
 
-                (Some(metadata_writer), timeline_writer)
-            }
-            false => (None, None),
-        };
+                        let timeline_writer: Box<dyn Writer + Send + Sync> = match output_type {
+                            OutputType::File => Box::new(FileWriter::new(timeline_file)),
+                            OutputType::Gzip => {
+                                Box::new(GzipWriter::new(timeline_file, compression_level))
+                            }
+                        };
+                        let mut timeline_file_report = report_template.clone();
+                        timeline_file_report.file_name = timeline_file_path.display().to_string();
+                        (Some(timeline_writer), Some(timeline_file_report))
+                    } else {
+                        (None, None)
+                    };
+
+                    (
+                        Some(metadata_writer),
+                        Some(metadata_file_report),
+                        timeline_writer,
+                        timeline_file_report,
+                    )
+                }
+                false => (None, None, None, None),
+            };
         Ok(Self {
             data_writer,
             metadata_writer,
@@ -181,6 +198,8 @@ impl JsonFormatter {
             include_empty,
             include_timeline,
             file_report,
+            metadata_file_report,
+            timeline_file_report,
         })
     }
 
@@ -243,6 +262,10 @@ impl JsonFormatter {
             self.line_buffer.push_str(metadata.0.as_ref());
             self.line_buffer.push('\n');
             writer.write(&mut self.line_buffer)?;
+            self.metadata_file_report
+                .as_mut()
+                .expect("metadata writer requires a file report")
+                .num_lines += 1;
         }
         Ok(())
     }
@@ -266,7 +289,10 @@ impl JsonFormatter {
                 )?;
                 self.line_buffer.push('\n');
                 timeline_writer.write(&mut self.line_buffer)?;
-                self.file_report.num_lines += 1;
+                self.timeline_file_report
+                    .as_mut()
+                    .expect("timeline writer requires a file report")
+                    .num_lines += 1;
             }
         }
 
@@ -282,10 +308,15 @@ impl JsonFormatter {
 
         self.line_buffer.push('\n');
         self.data_writer.write(&mut self.line_buffer)?;
-        if !self.include_timeline {
-            self.file_report.num_lines += 1;
-        }
+        self.file_report.num_lines += 1;
         Ok(())
+    }
+
+    pub fn reports(&self) -> Vec<FileReport> {
+        let mut reports = vec![self.file_report.clone()];
+        reports.extend(self.metadata_file_report.clone());
+        reports.extend(self.timeline_file_report.clone());
+        reports
     }
 
     /// Closes the output stream and ensures all buffered data is written and flushed.
@@ -513,7 +544,12 @@ mod tests {
 
         output.write_metadata(&line_builder).unwrap();
         output.write_normalized(&line_builder).unwrap();
-        assert_eq!(output.file_report.num_lines, 1);
+        let reports = output.reports();
+        assert_eq!(reports.len(), 2);
+        assert_eq!(reports[0].num_lines, 1);
+        assert!(reports[0].file_name.ends_with("test_normalized_json.jsonl"));
+        assert_eq!(reports[1].num_lines, 1);
+        assert!(reports[1].file_name.ends_with("ogre_metadata.jsonl"));
 
         drop(output);
 

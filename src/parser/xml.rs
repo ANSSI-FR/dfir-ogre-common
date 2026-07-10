@@ -9,7 +9,7 @@ use crate::{
 };
 
 use pyo3::prelude::*;
-use regex::Regex;
+use sxd_document::dom::{Document, Element};
 use sxd_xpath::XPath;
 use sxd_xpath::nodeset::Node;
 
@@ -61,7 +61,6 @@ pub fn parse(
 
     let mut xml_str = String::new();
     file_handle.read_to_string(&mut xml_str)?;
-    let xml_str = strip_namespaces(&xml_str);
 
     let sxd_package = sxd_document::parser::parse(&xml_str)?;
     let xpath_context = sxd_xpath::Context::new();
@@ -70,6 +69,7 @@ pub fn parse(
     let mut output = Output::new(run_config, plugin_config, metadata, None)?;
 
     let document = sxd_package.as_document();
+    remove_namespaces(document);
     let result = xpath_expr.evaluate(&xpath_context, document.root())?;
 
     if let sxd_xpath::Value::Nodeset(nodeset) = result {
@@ -218,14 +218,36 @@ impl XPathCache {
     }
 }
 
-///
-///  removes `xmlns` namespaces from an XML string to allow simple xpath queries
-///
-fn strip_namespaces(xml: &str) -> String {
-    let re_xmlns =
-        Regex::new("\\s+xmlns(?::\\w+)?\\s*=\\s*\"[^\"]*\"").expect("this regexp should compile");
-    let xml = re_xmlns.replace_all(xml, "");
-    xml.into_owned()
+fn remove_namespaces(document: Document<'_>) {
+    for child in document.root().children() {
+        if let Some(element) = child.element() {
+            remove_element_namespaces(element);
+        }
+    }
+}
+
+fn remove_element_namespaces(element: Element<'_>) {
+    let local_name = element.name().local_part().to_owned();
+    element.set_name(local_name.as_str());
+    element.set_default_namespace_uri(None);
+    element.set_preferred_prefix(None);
+
+    for attribute in element.attributes() {
+        if attribute.name().namespace_uri().is_some() {
+            let local_name = attribute.name().local_part().to_owned();
+            let value = attribute.value().to_owned();
+            attribute.remove_from_parent();
+            element.set_attribute_value(local_name.as_str(), &value);
+        } else {
+            attribute.set_preferred_prefix(None);
+        }
+    }
+
+    for child in element.children() {
+        if let Some(element) = child.element() {
+            remove_element_namespaces(element);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -289,7 +311,6 @@ mod tests {
     #[test]
     fn xpath_without_namespace() {
         let xml = fs::read_to_string("test_data/xml/FullCompatReport.xml").unwrap();
-        let xml = strip_namespaces(&xml);
         let sxd_package = sxd_document::parser::parse(&xml).unwrap();
 
         let xpath_context = sxd_xpath::Context::new();
@@ -298,6 +319,7 @@ mod tests {
         let xpath_expr = factory.build(xpath).unwrap().unwrap();
 
         let document = sxd_package.as_document();
+        remove_namespaces(document);
 
         let result = xpath_expr
             .evaluate(&xpath_context, document.root())
@@ -308,11 +330,24 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_namespaces_multiple_spaces() {
-        // Ensure that the leading whitespace before the attribute is also removed
-        let input = r#"<elem    xmlns ="uri"   xmlns:ns="uri2"   attr="v"/> "#;
-        let expected = r#"<elem   attr="v"/> "#;
-        let result = strip_namespaces(input);
-        assert_eq!(result, expected);
+    fn namespace_removal_handles_prefixes_attributes_and_single_quotes() {
+        let xml = r#"<root xmlns='urn:default' xmlns:ns-one='urn:other'>
+            <ns-one:item ns-one:kind='value'>text</ns-one:item>
+        </root>"#;
+        let sxd_package = sxd_document::parser::parse(xml).unwrap();
+        let document = sxd_package.as_document();
+        remove_namespaces(document);
+
+        let xpath_context = sxd_xpath::Context::new();
+        let xpath = sxd_xpath::Factory::new()
+            .build("/root/item[@kind='value']")
+            .unwrap()
+            .unwrap();
+        let result = xpath.evaluate(&xpath_context, document.root()).unwrap();
+
+        let sxd_xpath::Value::Nodeset(nodeset) = result else {
+            panic!("XPath did not return a node set");
+        };
+        assert_eq!(nodeset.size(), 1);
     }
 }

@@ -1,4 +1,4 @@
-use crate::{Error, Value, date_util::DateOutputCodec};
+use crate::{Error, Value, date_util::DateOutputCodec, hash_util};
 use blake3::Hasher;
 
 use indexmap::IndexMap;
@@ -55,9 +55,11 @@ impl Record {
     ///   with the record's contents.
     #[allow(clippy::should_implement_trait)]
     pub fn hash(&self, hasher: &mut Hasher) {
+        hash_util::start(hasher, "record");
+        hash_util::write_u64(hasher, self.len() as u64);
         for (key, value) in self.iter() {
-            hasher.update(key.as_bytes());
-            value.hash(hasher);
+            hash_util::write_field(hasher, key);
+            value.hash_canonical(hasher);
         }
     }
 
@@ -182,7 +184,7 @@ mod tests {
         Value::json_serialise_value(&val, &mut buf, &DateOutputCodec::Iso(), true).unwrap();
 
         // Verify that control characters are escaped as defined in `json_serialise_value`
-        let expected = "\"Line1\\nLine2\\t\\\"\"";
+        let expected = "\"Line1\\nLine2\\r\\t\\\"\"";
         assert_eq!(buf, expected);
     }
 
@@ -315,6 +317,16 @@ mod tests {
         r2.add("a", Value::Int(1));
 
         assert_ne!(record_hash(&r1), record_hash(&r2));
+    }
+
+    #[test]
+    fn record_hash_frames_field_names_and_values() {
+        let mut first = Record::new();
+        first.add("ab", Value::String("c".to_owned()));
+        let mut second = Record::new();
+        second.add("a", Value::String("bc".to_owned()));
+
+        assert_ne!(record_hash(&first), record_hash(&second));
     }
     /// Helper that returns the Blake3 hash of a `Value`.
     fn hash_of(val: &Value) -> blake3::Hash {

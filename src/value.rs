@@ -2,7 +2,7 @@ use blake3::Hasher;
 use chrono::{DateTime, Utc};
 
 use crate::{
-    DateOutputCodec, Error, Record,
+    DateOutputCodec, Error, Record, hash_util,
     metadata::MetadataSerialized,
     serialise::{JsonArrayWriter, JsonObjectWriter},
     serialize_date,
@@ -140,7 +140,11 @@ impl Value {
                     buffer.push_str(&v.to_string());
                 }
                 Value::Float(v) => {
-                    buffer.push_str(&v.to_string());
+                    if v.is_finite() {
+                        buffer.push_str(&v.to_string());
+                    } else {
+                        buffer.push_str("null");
+                    }
                 }
                 Value::Bool(v) => buffer.push_str(&v.to_string()),
                 Value::Date(date_time) => {
@@ -285,46 +289,53 @@ impl Value {
 
     #[allow(clippy::should_implement_trait)]
     pub fn hash(&self, hasher: &mut Hasher) {
+        hash_util::start(hasher, "value");
+        self.hash_canonical(hasher);
+    }
+
+    pub(crate) fn hash_canonical(&self, hasher: &mut Hasher) {
         match self {
             Value::Null() => {
-                // Hash a constant marker for null values
-                hasher.update(b"n");
+                hash_util::write_tag(hasher, 0);
             }
             Value::String(s) => {
-                hasher.update(s.as_bytes());
+                hash_util::write_tag(hasher, 1);
+                hash_util::write_str(hasher, s);
             }
             Value::Array(values) => {
+                hash_util::write_tag(hasher, 2);
+                hash_util::write_u64(hasher, values.len() as u64);
                 for val in values {
-                    val.hash(hasher);
+                    val.hash_canonical(hasher);
                 }
             }
             Value::Int(i) => {
-                hasher.update(&i.to_ne_bytes());
+                hash_util::write_tag(hasher, 3);
+                hash_util::write_i64(hasher, *i);
             }
             Value::Float(f) => {
-                hasher.update(&f.to_ne_bytes());
+                hash_util::write_tag(hasher, 4);
+                hash_util::write_f64(hasher, *f);
             }
             Value::Bool(b) => {
-                let byte = if *b { 1u8 } else { 0u8 };
-                hasher.update(&[byte]);
+                hash_util::write_tag(hasher, 5);
+                hash_util::write_bool(hasher, *b);
             }
             Value::Date(date_time) => {
-                if let Some(nanos) = date_time.timestamp_nanos_opt() {
-                    hasher.update(&nanos.to_ne_bytes());
-                } else {
-                    // Fallback: hash a zero value if the timestamp is out of range.
-                    hasher.update(&0i64.to_ne_bytes());
-                }
+                hash_util::write_tag(hasher, 6);
+                hash_util::write_date(hasher, date_time);
             }
             Value::Object(record) => {
-                // Hash each key/value pair in insertion order
+                hash_util::write_tag(hasher, 7);
+                hash_util::write_u64(hasher, record.len() as u64);
                 for (key, value) in record.iter() {
-                    hasher.update(key.as_bytes());
-                    value.hash(hasher);
+                    hash_util::write_field(hasher, key);
+                    value.hash_canonical(hasher);
                 }
             }
             Value::Metadata(metadata) => {
-                hasher.update(metadata.0.as_bytes());
+                hash_util::write_tag(hasher, 8);
+                hash_util::write_str(hasher, metadata.0.as_str());
             }
         }
     }
@@ -340,7 +351,7 @@ pub fn escape_special_chars(v: &str) -> String {
             '\\' => result.push_str("\\\\"),
             '\"' => result.push_str("\\\""),
             '\n' => result.push_str("\\n"),
-            '\r' => continue, // skip \r
+            '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
             '\x08' => result.push_str("\\b"),     // backspace
             '\x0C' => result.push_str("\\f"),     // form feed
@@ -372,7 +383,7 @@ mod tests {
             ("quote\"test", "quote\\\"test"),
             ("backslash\\test", "backslash\\\\test"),
             ("newline\n\t", "newline\\n\\t"),
-            ("carriage\rreturn", "carriagereturn"), // \r is dropped
+            ("carriage\rreturn", "carriage\\rreturn"),
             ("\x0C", "\\f"),
             ("\x08", "\\b"),
             ("\x0B", "\\u000B"),
@@ -454,6 +465,26 @@ mod tests {
     }
 
     #[test]
+    fn json_serialise_non_finite_floats_as_null() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut buffer = String::new();
+            Value::json_serialise_value(
+                &Value::Float(value),
+                &mut buffer,
+                &DateOutputCodec::Iso(),
+                true,
+            )
+            .unwrap();
+
+            assert_eq!(buffer, "null");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&buffer).unwrap(),
+                serde_json::Value::Null
+            );
+        }
+    }
+
+    #[test]
     fn metadata_csv_serialise_escapes_raw_json() {
         use std::sync::Arc;
 
@@ -486,13 +517,11 @@ mod tests {
 
     #[test]
     fn value_hash_null_marker() {
-        // The `Null` variant hashes a constant marker `"n"`
-        let mut expected = blake3::Hasher::new();
-        expected.update(b"n");
-        let expected = expected.finalize();
-
         let actual = hash_of(&Value::Null());
-        assert_eq!(expected, actual);
+        assert_eq!(
+            actual.to_hex().as_str(),
+            "434c51309bf384192fbf4f4089b57c46a055df7ea2e3bab0c44b24bf022c9dc9"
+        );
     }
 
     #[test]
@@ -537,6 +566,20 @@ mod tests {
         let a1 = Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
         let a2 = Value::Array(vec![Value::Int(3), Value::Int(2), Value::Int(1)]);
         assert_ne!(hash_of(&a1), hash_of(&a2));
+    }
+
+    #[test]
+    fn value_hash_frames_array_elements() {
+        let first = Value::Array(vec![
+            Value::String("ab".to_owned()),
+            Value::String("c".to_owned()),
+        ]);
+        let second = Value::Array(vec![
+            Value::String("a".to_owned()),
+            Value::String("bc".to_owned()),
+        ]);
+
+        assert_ne!(hash_of(&first), hash_of(&second));
     }
 
     #[test]

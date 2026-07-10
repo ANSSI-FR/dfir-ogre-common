@@ -121,27 +121,27 @@ impl OutputWriter {
         }
     }
 
-    /// Pull the FileReport that the underlying writer has been tracking.
+    /// Pull the FileReports that the underlying writer has been tracking.
     ///
     /// # Returns
-    /// * `OuputResult` - Contains the file name and the number of lines written
-    pub fn result(&self) -> FileReport {
+    /// * A report for each file written by the output.
+    pub fn result(&self) -> Vec<FileReport> {
         match self {
             Self::Jsonl(json_output) => {
                 let out = json_output.lock().expect("mutex lock panicked");
-                out.file_report.clone()
+                out.reports()
             }
             Self::NormalizedJsonl(json_output) => {
                 let out = json_output.lock().expect("mutex lock panicked");
-                out.file_report.clone()
+                out.reports()
             }
             Self::Csv(csv_output) => {
                 let out = csv_output.lock().expect("mutex lock panicked");
-                out.file_report.clone()
+                out.reports()
             }
             Self::NormalizedCsv(csv_output) => {
                 let out = csv_output.lock().expect("mutex lock panicked");
-                out.file_report.clone()
+                out.reports()
             }
         }
     }
@@ -393,7 +393,7 @@ impl Output {
         };
 
         for out in &self.outputs {
-            report.file_reports.push(out.result());
+            report.file_reports.extend(out.result());
         }
         report
     }
@@ -540,12 +540,37 @@ mod tests {
         drop(output);
 
         assert!(record.is_empty());
-        assert_eq!(report.file_reports.len(), 2);
+        assert_eq!(report.file_reports.len(), 4);
         assert!(
             report
                 .file_reports
                 .iter()
                 .all(|file_report| file_report.num_lines == 1)
+        );
+        let reported_files: Vec<&str> = report
+            .file_reports
+            .iter()
+            .map(|file_report| file_report.file_name.as_str())
+            .collect();
+        assert!(
+            reported_files
+                .iter()
+                .any(|name| name.ends_with("dispatch.events.jsonl"))
+        );
+        assert!(
+            reported_files
+                .iter()
+                .any(|name| name.ends_with("ogre_metadata.jsonl"))
+        );
+        assert!(
+            reported_files
+                .iter()
+                .any(|name| name.ends_with("dispatch.events.csv"))
+        );
+        assert!(
+            reported_files
+                .iter()
+                .any(|name| name.ends_with("ogre_metadata.csv"))
         );
 
         let json_data_path = output_folder.join("dispatch.events.jsonl");

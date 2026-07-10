@@ -1098,7 +1098,7 @@ mod tests {
         let tup = Value::Object(record);
         let mut buffer = String::new();
         Value::json_serialise_value(&tup, &mut buffer, &DateOutputCodec::Iso(), true).unwrap();
-        let expected = r#"{"Array":["test \"\n\"erse","test2"]}"#;
+        let expected = r#"{"Array":["test \"\n\r\"erse","test2"]}"#;
         assert_eq!(expected, buffer);
     }
 

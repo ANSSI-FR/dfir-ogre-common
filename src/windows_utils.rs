@@ -1,11 +1,11 @@
-use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use pyo3::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     sync::LazyLock,
 };
 
-use crate::{Error, Record, Value};
+use crate::{Error, Record, Value, date_util::filetime_to_datetime};
 
 #[derive(Debug, Clone, Default)]
 #[pyclass(get_all, from_py_object)]
@@ -396,14 +396,8 @@ pub fn convert_sid(b_sid: &[u8]) -> Result<String, Error> {
 //
 // parse TimeStamp in the FILETIME format: the number of 100-nanosecond intervals since January 1, 1601 (UTC).
 //
-pub fn from_filetime(timestamp: u64) -> DateTime<Utc> {
-    let naive = NaiveDate::from_ymd_opt(1601, 1, 1)
-        .and_then(|x| x.and_hms_nano_opt(0, 0, 0, 0))
-        .expect("to_datetime() should work")
-        + Duration::microseconds((timestamp / 10) as i64);
-
-    let result = Utc.from_local_datetime(&naive);
-    result.earliest().unwrap_or(Utc::now())
+pub fn from_filetime(timestamp: u64) -> Result<DateTime<Utc>, Error> {
+    filetime_to_datetime(timestamp)
 }
 
 static _ACE_TYPE: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {

@@ -6,6 +6,7 @@ use crate::{
     Field, FieldMapping, FieldName, Metadata, Record, Value,
     errors::Error,
     field_traversal::{self, FieldTraversalHandler},
+    hash_util,
     timeline::{TimeLine, TimeLineBuilder, TimelineField},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE as BASE64};
@@ -42,12 +43,14 @@ impl LineData {
     /// * `compute_hash` - If true, initializes a hasher to generate identifiers from field values.
     /// * `has_primary_keys` - Indicates if the input has defined primary keys for hashing.
     fn new(compute_hash: bool, has_primary_keys: bool) -> Self {
+        let mut data_id_hasher = Hasher::new();
+        hash_util::start(&mut data_id_hasher, "data");
         Self {
             has_primary_keys,
             data: Record::new(),
             data_id: None,
             timeline: Vec::new(),
-            data_id_hasher: Hasher::new(),
+            data_id_hasher,
             compute_hash,
         }
     }
@@ -60,12 +63,14 @@ impl LineData {
     /// * `compute_hash` - If true, initializes a hasher to generate identifiers from field values.
     /// * `has_primary_keys` - Indicates if the input has defined primary keys for hashing.
     fn with_capacity(size: usize, compute_hash: bool, has_primary_keys: bool) -> Self {
+        let mut data_id_hasher = Hasher::new();
+        hash_util::start(&mut data_id_hasher, "data");
         Self {
             has_primary_keys,
             data: Record::with_capacity(size),
             data_id: None,
             timeline: Vec::new(),
-            data_id_hasher: Hasher::new(),
+            data_id_hasher,
             compute_hash,
         }
     }
@@ -75,15 +80,13 @@ impl LineData {
         if self.compute_hash {
             if self.has_primary_keys {
                 if field_name.primary_key {
-                    self.data_id_hasher
-                        .update(field_name.output_name().as_bytes());
-                    value.hash(&mut self.data_id_hasher);
+                    hash_util::write_field(&mut self.data_id_hasher, field_name.output_name());
+                    value.hash_canonical(&mut self.data_id_hasher);
                 }
             } else {
                 //if no primary key is defined, every fields are used to create the identifier
-                self.data_id_hasher
-                    .update(field_name.output_name().as_bytes());
-                value.hash(&mut self.data_id_hasher);
+                hash_util::write_field(&mut self.data_id_hasher, field_name.output_name());
+                value.hash_canonical(&mut self.data_id_hasher);
             }
         }
 
@@ -94,6 +97,7 @@ impl LineData {
     fn clear(&mut self) {
         self.data_id = None;
         self.data_id_hasher.reset();
+        hash_util::start(&mut self.data_id_hasher, "data");
         self.data.clear();
         self.timeline.clear();
     }
@@ -278,15 +282,18 @@ impl LineBuilder {
 
         if self.compute_hash {
             //add some metadata to the data id to ensure uniqueness across computer, original file name and vss
-            self.line_data
-                .data_id_hasher
-                .update(self.metadata.computer.as_bytes());
-            if let Some(filename) = &self.metadata.original_filename {
-                self.line_data.data_id_hasher.update(filename.as_bytes());
-            }
-            if let Some(vss) = &self.metadata.vss {
-                self.line_data.data_id_hasher.update(vss.as_bytes());
-            }
+            hash_util::write_field(&mut self.line_data.data_id_hasher, "computer");
+            hash_util::write_str(&mut self.line_data.data_id_hasher, &self.metadata.computer);
+            hash_util::write_field(&mut self.line_data.data_id_hasher, "original_filename");
+            hash_util::write_option_str(
+                &mut self.line_data.data_id_hasher,
+                self.metadata.original_filename.as_deref(),
+            );
+            hash_util::write_field(&mut self.line_data.data_id_hasher, "vss");
+            hash_util::write_option_str(
+                &mut self.line_data.data_id_hasher,
+                self.metadata.vss.as_deref(),
+            );
 
             let data_id = BASE64.encode(self.line_data.data_id_hasher.finalize().as_slice());
 

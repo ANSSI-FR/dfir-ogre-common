@@ -3,6 +3,22 @@ use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use crate::errors::Error;
 use pyo3::prelude::*;
 
+const FILETIME_TICKS_PER_SECOND: i128 = 10_000_000;
+const FILETIME_UNIX_EPOCH_TICKS: i128 = 116_444_736_000_000_000;
+
+pub(crate) fn filetime_to_datetime(timestamp: u64) -> Result<DateTime<Utc>, Error> {
+    let unix_ticks = i128::from(timestamp) - FILETIME_UNIX_EPOCH_TICKS;
+    let seconds = unix_ticks.div_euclid(FILETIME_TICKS_PER_SECOND);
+    let subsecond_ticks = unix_ticks.rem_euclid(FILETIME_TICKS_PER_SECOND);
+    let seconds = i64::try_from(seconds).map_err(|_| Error::InvalidTimestamp())?;
+    let nanoseconds =
+        u32::try_from(subsecond_ticks * 100).map_err(|_| Error::InvalidTimestamp())?;
+
+    Utc.timestamp_opt(seconds, nanoseconds)
+        .single()
+        .ok_or(Error::InvalidTimestamp())
+}
+
 /// Defines supported formats for parsing date strings
 #[derive(Debug, Clone)]
 #[pyclass(from_py_object)]
@@ -133,11 +149,8 @@ pub fn parse_date(input: &str, codec: &DateInputCodec) -> Result<DateTime<Utc>, 
             Ok(Utc.timestamp_nanos(timestamp))
         }
         DateInputCodec::FileTime() => {
-            let timestamp = input.parse::<i64>()?;
-            let unix_timestamp = (timestamp / 10_000_000) - 11_644_473_600;
-            Utc.timestamp_opt(unix_timestamp, 0)
-                .single()
-                .ok_or(Error::InvalidTimestamp())
+            let timestamp = input.parse::<u64>()?;
+            filetime_to_datetime(timestamp)
         }
     }
 }
@@ -399,11 +412,18 @@ mod tests {
         let codec = DateInputCodec::from("file_time");
 
         let input = "133210364868558102";
-        let date = parse_date(input, &codec).unwrap();
+        let first_date = parse_date(input, &codec).unwrap();
 
         let output_codec = DateOutputCodec::from_string("iso");
-        let serialized = serialize_date(&date, &output_codec);
-        assert_eq!(serialized, "2023-02-16T15:54:46.000000+00:00");
+        let serialized = serialize_date(&first_date, &output_codec);
+        assert_eq!(serialized, "2023-02-16T15:54:46.855810+00:00");
+        assert_eq!(first_date.timestamp_subsec_nanos(), 855_810_200);
+
+        let adjacent = parse_date("133210364868558103", &codec).unwrap();
+        assert_eq!(
+            adjacent.timestamp_nanos_opt().unwrap() - first_date.timestamp_nanos_opt().unwrap(),
+            100
+        );
 
         let input = "132723834270000000";
         let date = parse_date(input, &codec).unwrap();

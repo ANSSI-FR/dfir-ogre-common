@@ -201,7 +201,7 @@ where
                 continue;
             }
 
-            let filetime = from_filetime(key_node.timestamp());
+            let filetime = from_filetime(key_node.timestamp())?;
 
             let security_descriptor_b = key_node.security_descriptor()?;
 

@@ -7,6 +7,7 @@ mod field_mapping;
 mod field_traversal;
 mod format_csv;
 mod format_json;
+mod hash_util;
 mod lib_py;
 mod line_builder;
 mod metadata;

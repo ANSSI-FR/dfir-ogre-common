@@ -175,7 +175,7 @@ impl RegKey {
     {
         let key_name = node.name()?.to_string_lossy();
 
-        let filetime = from_filetime(node.timestamp());
+        let filetime = from_filetime(node.timestamp())?;
         let security_descriptor_b = node.security_descriptor()?;
         let path = format!("{path}\\{key_name}");
         let key_security = security_descriptor_from_bytes(&security_descriptor_b)?;

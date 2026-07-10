@@ -15,6 +15,7 @@ use crate::{
     date_util::DateOutputCodec,
     errors::Error,
     format_csv::CSV_DELIMITER,
+    hash_util,
     metadata::MetadataSerialized,
     serialise::{CsvRowWriter, JsonObjectWriter},
     serialize_date,
@@ -115,25 +116,17 @@ impl TimeLine {
     }
 
     pub fn compute_id(&mut self, hasher: &mut Hasher) {
-        hasher.update("computer".as_bytes());
-        if let Some(computer) = &self.computer {
-            hasher.update(computer.as_bytes());
-        }
-        hasher.update("timestamp".as_bytes());
-        if let Some(nanos) = self.timestamp.timestamp_nanos_opt() {
-            hasher.update(&nanos.to_ne_bytes());
-        } else {
-            // Hash a zero value if the timestamp is missing or out‑of‑range.
-            hasher.update(&0i64.to_ne_bytes());
-        }
-        hasher.update("timestamp_meaning".as_bytes());
-        hasher.update(self.timestamp_meaning.as_bytes());
-        hasher.update("data_type".as_bytes());
-        hasher.update(self.data_type.as_bytes());
-
-        if let Some(data_id) = &self.data_id {
-            hasher.update(data_id.as_bytes());
-        }
+        hash_util::start(hasher, "timeline");
+        hash_util::write_field(hasher, "computer");
+        hash_util::write_option_str(hasher, self.computer.as_deref());
+        hash_util::write_field(hasher, "timestamp");
+        hash_util::write_date(hasher, &self.timestamp);
+        hash_util::write_field(hasher, "timestamp_meaning");
+        hash_util::write_str(hasher, &self.timestamp_meaning);
+        hash_util::write_field(hasher, "data_type");
+        hash_util::write_str(hasher, &self.data_type);
+        hash_util::write_field(hasher, "data_id");
+        hash_util::write_option_str(hasher, self.data_id.as_deref());
 
         self.id = Some(BASE64.encode(hasher.finalize().as_slice()));
     }
@@ -1294,10 +1287,11 @@ mod tests {
             json.contains("\"timestamp_meaning\":\"Created\""),
             "JSON should contain timestamp meaning"
         );
-        assert!(
-            json.contains("\"id\":\"HDsvocVTyj222XnsHSuRYturmDt5wJ2NXtS2R9zNsKM=\""),
-            "JSON should contain timestamp meaning"
+        assert_eq!(
+            tl.id.as_deref(),
+            Some("iau77jEW0Yvhp9w2UlNRmMT9C8z2Q-xvC1RIhGN8-L4=")
         );
+        assert!(json.contains(tl.id.as_deref().unwrap()));
 
         let normalized = true;
         // CSV serialisation (normalized).
@@ -1316,7 +1310,7 @@ mod tests {
             line_number = line_nb + 1;
             let rec = record.unwrap();
             assert_eq!(10, rec.len());
-            assert_eq!(&rec[0], "HDsvocVTyj222XnsHSuRYturmDt5wJ2NXtS2R9zNsKM=");
+            assert_eq!(&rec[0], "iau77jEW0Yvhp9w2UlNRmMT9C8z2Q-xvC1RIhGN8-L4=");
             assert_eq!(&rec[1], "COMP1");
             assert_eq!(&rec[2], "2020-01-01T00:00:00.000000+00:00");
             assert_eq!(&rec[3], "Created");
