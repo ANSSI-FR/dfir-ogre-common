@@ -125,7 +125,7 @@ pub struct LineBuilder {
     /// If `true`, compute deterministic identifiers from metadata and line data.
     pub compute_hash: bool,
     /// If `true`, build a placeholder timeline entry when no valid date was extracted.
-    pub timeline_keep_no_date: bool,
+    pub timeline_include_undated: bool,
 }
 
 struct LineBuildTraversal<'a> {
@@ -243,7 +243,7 @@ impl LineBuilder {
             force_snake_case,
             line_data: LineData::new(compute_hash, has_primary_keys),
             compute_hash,
-            timeline_keep_no_date: false,
+            timeline_include_undated: false,
         }
     }
 
@@ -282,7 +282,7 @@ impl LineBuilder {
         if let Some(builder) = &mut self.timeline_builder {
             builder.build_timelines_with_no_date(
                 &mut self.line_data.timeline,
-                self.timeline_keep_no_date,
+                self.timeline_include_undated,
             )?;
         }
 

@@ -874,13 +874,13 @@ impl TimeLineBuilder {
     pub(crate) fn build_timelines_with_no_date(
         &mut self,
         timeline_records: &mut Vec<TimeLine>,
-        keep_no_date: bool,
+        include_undated: bool,
     ) -> Result<(), Error> {
         let related_user = self.format_related_user()?;
         let description = self.format_description()?;
         let additional_description = self.format_additional_description()?;
         let mut timeline_data = self.timeline_data.0.lock().expect("mutex lock panicked");
-        if timeline_data.timestamps.is_empty() && keep_no_date {
+        if timeline_data.timestamps.is_empty() && include_undated {
             timeline_records.push(TimeLine {
                 timestamp: None,
                 timestamp_meaning: EMPTY_TIMESTAMP_MEANING.to_owned(),

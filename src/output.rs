@@ -31,7 +31,7 @@ pub struct FileReport {
     pub format: String,
     pub date_format: String,
     pub with_timeline: bool,
-    pub timeline_keep_no_date: bool,
+    pub timeline_include_undated: bool,
     pub include_empty: bool,
     pub file_name: String,
     pub num_lines: usize,
@@ -232,7 +232,7 @@ impl Output {
         metadata.data_type = data_type_conf.data_type.clone();
         //series of flag that defines what needs to be computed
         let mut compute_timeline = false;
-        let mut timeline_keep_no_date = false;
+        let mut timeline_include_undated = false;
         let mut compute_hash = false;
         let mut outputs = Vec::new();
 
@@ -262,7 +262,7 @@ impl Output {
 
             if output_conf.with_timeline {
                 compute_timeline = true;
-                timeline_keep_no_date |= output_conf.timeline_keep_no_date;
+                timeline_include_undated |= output_conf.timeline_include_undated;
             }
             //create output folder
             let output_folder = &output_conf.output_folder;
@@ -278,8 +278,8 @@ impl Output {
                 format: output_conf.format.clone(),
                 date_format: output_conf.date_format.clone(),
                 with_timeline: output_conf.with_timeline,
-                timeline_keep_no_date: output_conf.with_timeline
-                    && output_conf.timeline_keep_no_date,
+                timeline_include_undated: output_conf.with_timeline
+                    && output_conf.timeline_include_undated,
                 include_empty: output_conf.include_empty,
                 ..Default::default()
             };
@@ -365,7 +365,7 @@ impl Output {
             data_type_conf.has_primary_key,
             run_config.force_snake_case,
         );
-        line_builder.timeline_keep_no_date = timeline_keep_no_date;
+        line_builder.timeline_include_undated = timeline_include_undated;
 
         //write metadata for normalized output
         for writer in &mut outputs {
@@ -702,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn timeline_keep_no_date_is_applied_per_output() {
+    fn timeline_include_undated_is_applied_per_output() {
         let output_folder = test_output_folder("output_timeline_no_date");
         let mut plugin_config = mapped_plugin_config("events", event_field_mapping());
         let mut timeline =
@@ -713,13 +713,13 @@ mod tests {
         let mut discard = json_output_config("discard_no_date", &output_folder, HashMap::new());
         discard.with_timeline = true;
 
-        let mut keep = json_output_config("keep_no_date", &output_folder, HashMap::new());
+        let mut keep = json_output_config("include_undated", &output_folder, HashMap::new());
         keep.with_timeline = true;
-        keep.timeline_keep_no_date = true;
+        keep.timeline_include_undated = true;
 
         let mut inactive =
             json_output_config("inactive_no_timeline", &output_folder, HashMap::new());
-        inactive.timeline_keep_no_date = true;
+        inactive.timeline_include_undated = true;
 
         let mut output = Output::new(
             RunConfiguration::new(vec![discard, keep, inactive], true, None),
@@ -740,7 +740,7 @@ mod tests {
         assert!(discarded.is_empty());
 
         let placeholder: serde_json::Value = serde_json::from_str(
-            fs::read_to_string(output_folder.join("keep_no_date.events.jsonl"))
+            fs::read_to_string(output_folder.join("include_undated.events.jsonl"))
                 .unwrap()
                 .trim(),
         )
