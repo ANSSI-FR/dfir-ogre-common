@@ -50,6 +50,8 @@ pub fn parse(
     plugin_config: PluginConfiguration,
     metadata: Metadata,
 ) -> Result<RunReport, Error> {
+    runner::validate_configuration(&configuration, &plugin_config)?;
+
     let parser = SrumParser::new(input_file)?;
     let report = parser.parse_every_tables(configuration, plugin_config, metadata)?;
     Ok(report)
@@ -131,6 +133,8 @@ impl SrumParser {
         plugin_config: PluginConfiguration,
         metadata: Metadata,
     ) -> Result<RunReport, Error> {
+        runner::validate_configuration(&configuration, &plugin_config)?;
+
         let mut run_report = RunReport::new();
 
         for srum_table in srum_tables() {
@@ -154,33 +158,30 @@ impl SrumParser {
                 }
             };
 
-            let mut output = Output::new(
+            let output = Output::new(
                 configuration.clone(),
                 plugin_config.clone(),
                 metadata.clone(),
                 Some(srum_table.name.to_owned()),
             )?;
 
-            match self.db.table_by_name(srum_table.id) {
-                Ok(table) => {
-                    if let Err(e) = self.parse_table(&table, &mut output, &data_mapping) {
+            runner::with_output(output, &mut run_report, |output, run_report| {
+                match self.db.table_by_name(srum_table.id) {
+                    Ok(table) => {
+                        if let Err(e) = self.parse_table(&table, output, &data_mapping) {
+                            let error = format!("SRUM Table:'{}', Error: {e}", &srum_table.name,);
+                            warn!("{error}");
+                            run_report.add_error(error);
+                        }
+                    }
+                    Err(e) => {
                         let error = format!("SRUM Table:'{}', Error: {e}", &srum_table.name,);
                         warn!("{error}");
-
-                        let mut report = runner::finalized_output_report(&mut output);
-                        report.last_error = Some(error);
-                        report.num_errors += 1;
-                        run_report.add_output_report(report);
-                    } else {
-                        run_report.add_output_report(runner::finalized_output_report(&mut output));
+                        // Missing tables are expected and are not reported as errors.
                     }
                 }
-                Err(e) => {
-                    let error = format!("SRUM Table:'{}', Error: {e}", &srum_table.name,);
-                    warn!("{error}");
-                    //missing tables are expected, does not report the error
-                }
-            }
+                Ok(())
+            });
         }
         Ok(run_report)
     }

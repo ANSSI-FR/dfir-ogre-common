@@ -36,6 +36,8 @@ pub fn parse(
     plugin_config: PluginConfiguration,
     metadata: Metadata,
 ) -> Result<RunReport, Error> {
+    runner::validate_configuration(&run_config, &plugin_config)?;
+
     let data_type_config = &plugin_config.get_data_type_mapping(None)?;
     let mut parser_tree = data_type_config
         .field_mapping
@@ -66,37 +68,39 @@ pub fn parse(
     let xpath_context = sxd_xpath::Context::new();
     let mut run_report = RunReport::new();
 
-    let mut output = Output::new(run_config, plugin_config, metadata, None)?;
-
     let document = sxd_package.as_document();
     remove_namespaces(document);
     let result = xpath_expr.evaluate(&xpath_context, document.root())?;
 
-    if let sxd_xpath::Value::Nodeset(nodeset) = result {
-        let mut multi_input_context = MultiInputContext::new(parser_tree.multi_input_group_count);
-        for node in nodeset.document_order() {
-            multi_input_context.clear();
-            let record_opt = parse_record(
-                &node,
-                &mut parser_tree,
-                &mut xpath_cache,
-                &xpath_context,
-                &mut multi_input_context,
-            );
+    let output = Output::new(run_config, plugin_config, metadata, None)?;
+    runner::with_output(output, &mut run_report, |output, run_report| {
+        if let sxd_xpath::Value::Nodeset(nodeset) = result {
+            let mut multi_input_context =
+                MultiInputContext::new(parser_tree.multi_input_group_count);
+            for node in nodeset.document_order() {
+                multi_input_context.clear();
+                let record_opt = parse_record(
+                    &node,
+                    &mut parser_tree,
+                    &mut xpath_cache,
+                    &xpath_context,
+                    &mut multi_input_context,
+                );
 
-            match record_opt {
-                Ok(mut record) => {
-                    if let Err(e) = output.write(&mut record) {
+                match record_opt {
+                    Ok(mut record) => {
+                        if let Err(e) = output.write(&mut record) {
+                            run_report.add_error(e.to_string());
+                        }
+                    }
+                    Err(e) => {
                         run_report.add_error(e.to_string());
                     }
-                }
-                Err(e) => {
-                    run_report.add_error(e.to_string());
-                }
-            };
+                };
+            }
         }
-    }
-    runner::finalize_output(&mut output, &mut run_report);
+        Ok(())
+    });
     Ok(run_report)
 }
 

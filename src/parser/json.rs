@@ -50,6 +50,8 @@ fn parse_json_internal(
     plugin_config: PluginConfiguration,
     metadata: Metadata,
 ) -> Result<RunReport, Error> {
+    runner::validate_configuration(&run_config, &plugin_config)?;
+
     let mut file_handle = File::open(Path::new(input_file))
         .map_err(|e| Error::FileRead(input_file.to_string(), e.to_string()))?;
 
@@ -67,20 +69,18 @@ fn parse_json_internal(
             "There is no field mapping in the configuration".to_string(),
         ))?
         .get_field_parser_tree();
-    let mut output = Output::new(run_config, plugin_config, metadata, None)?;
+    let output = Output::new(run_config, plugin_config, metadata, None)?;
     let mut multi_input_context = MultiInputContext::new(parser_tree.multi_input_group_count);
 
-    if let Err(error) = parse(
-        json,
-        &mut Record::new(),
-        &mut output,
-        &mut parser_tree,
-        &mut multi_input_context,
-    ) {
-        report.add_error(error.to_string());
-    }
-
-    runner::finalize_output(&mut output, &mut report);
+    runner::with_output(output, &mut report, |output, _report| {
+        parse(
+            json,
+            &mut Record::new(),
+            output,
+            &mut parser_tree,
+            &mut multi_input_context,
+        )
+    });
     Ok(report)
 }
 
@@ -90,7 +90,9 @@ fn parse_jsonl_internal(
     plugin_config: PluginConfiguration,
     metadata: Metadata,
 ) -> Result<RunReport, Error> {
-    let data_type_config = &plugin_config.data_type_configs[0];
+    runner::validate_configuration(&run_config, &plugin_config)?;
+
+    let data_type_config = &plugin_config.get_data_type_mapping(None)?;
     let mut parser_tree = data_type_config
         .field_mapping
         .as_ref()
@@ -103,36 +105,40 @@ fn parse_jsonl_internal(
         .map_err(|e| Error::FileRead(input_file.to_string(), e.to_string()))?;
 
     let reader = BufReader::new(file_handle);
-    let mut output = Output::new(run_config, plugin_config, metadata, None)?;
+    let output = Output::new(run_config, plugin_config, metadata, None)?;
 
     let mut report = RunReport::new();
     let mut record = Record::new();
     let mut multi_input_context = MultiInputContext::new(parser_tree.multi_input_group_count);
-    for (line_number, line) in reader.lines().enumerate() {
-        multi_input_context.clear();
-        match line {
-            Ok(line) => {
-                let json: Result<JsonValue, serde_json::Error> = serde_json::from_str(&line);
-                match json {
-                    Ok(json) => {
-                        if let Err(error) = parse(
-                            json,
-                            &mut record,
-                            &mut output,
-                            &mut parser_tree,
-                            &mut multi_input_context,
-                        ) {
-                            report.add_error(format!("Line {}: {error}", line_number + 1));
+    runner::with_output(output, &mut report, |output, report| {
+        for (line_number, line) in reader.lines().enumerate() {
+            multi_input_context.clear();
+            match line {
+                Ok(line) => {
+                    let json: Result<JsonValue, serde_json::Error> = serde_json::from_str(&line);
+                    match json {
+                        Ok(json) => {
+                            if let Err(error) = parse(
+                                json,
+                                &mut record,
+                                output,
+                                &mut parser_tree,
+                                &mut multi_input_context,
+                            ) {
+                                report.add_error(format!("Line {}: {error}", line_number + 1));
+                            }
+                        }
+                        Err(error) => {
+                            report.add_error(format!("Line {}: {error}", line_number + 1))
                         }
                     }
-                    Err(error) => report.add_error(format!("Line {}: {error}", line_number + 1)),
                 }
+                Err(error) => report.add_error(format!("Line {}: {error}", line_number + 1)),
             }
-            Err(error) => report.add_error(format!("Line {}: {error}", line_number + 1)),
+            record.clear();
         }
-        record.clear();
-    }
-    runner::finalize_output(&mut output, &mut report);
+        Ok(())
+    });
     Ok(report)
 }
 
@@ -499,6 +505,54 @@ mod tests {
             ))],
             None,
         )
+    }
+
+    #[test]
+    fn jsonl_empty_plugin_configuration_returns_typed_error_without_opening_input() {
+        let output_folder = test_folder("jsonl_empty_plugin_configuration");
+        let run_config = RunConfiguration::new(
+            vec![output_conf("empty_plugin", &output_folder)],
+            true,
+            None,
+        );
+
+        let report = parse_jsonl(
+            "does-not-exist.jsonl",
+            run_config,
+            PluginConfiguration::default(),
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.num_errors, 1);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("Could not retrieve DataTypeMapping")
+        );
+        assert!(report.output_reports.is_empty());
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn jsonl_empty_output_configuration_is_rejected_before_opening_input() {
+        let report = parse_jsonl(
+            "does-not-exist.jsonl",
+            RunConfiguration::new(vec![], true, None),
+            json_plugin_config("json", simple_event_mapping()),
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.num_errors, 1);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("at least one output")
+        );
+        assert!(report.output_reports.is_empty());
     }
 
     #[test]

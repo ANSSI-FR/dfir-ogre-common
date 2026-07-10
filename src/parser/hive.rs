@@ -73,6 +73,8 @@ fn parse_keys(
     root_name: Option<String>,
     regexp: Option<String>,
 ) -> Result<RunReport, Error> {
+    runner::validate_configuration(&configuration, &plugin_config)?;
+
     let data_mapping = &plugin_config.get_data_type_mapping(None)?;
     let include_values: bool = data_mapping
         .params
@@ -131,20 +133,20 @@ fn parse_keys(
 
     // time_line_builder.add_description_ouput_name(HIVE_KEY_PATH.to_owned());
 
-    let mut key_output = Output::new(configuration.clone(), plugin_config, metadata, None)?;
+    let key_output = Output::new(configuration.clone(), plugin_config, metadata, None)?;
 
     let mut report = RunReport::new();
-    parse_sub_keys(
-        root_key,
-        &root_name,
-        &mut key_output,
-        &regex,
-        include_values,
-        truncate_values_after,
-        &mut report,
-    )?;
-
-    runner::finalize_output(&mut key_output, &mut report);
+    runner::with_output(key_output, &mut report, |key_output, report| {
+        parse_sub_keys(
+            root_key,
+            &root_name,
+            key_output,
+            &regex,
+            include_values,
+            truncate_values_after,
+            report,
+        )
+    });
     Ok(report)
 }
 
@@ -316,7 +318,9 @@ fn parse_values(
     root_name: Option<String>,
     regexp: Option<String>,
 ) -> Result<RunReport, Error> {
-    let data_mapping = &plugin_config.data_type_configs[0];
+    runner::validate_configuration(&configuration, &plugin_config)?;
+
+    let data_mapping = &plugin_config.get_data_type_mapping(None)?;
 
     let truncate_values_after: usize = data_mapping
         .params
@@ -357,19 +361,19 @@ fn parse_values(
 
     // let key_field_mapping = FieldMapping::new(values_field_mapping(), None);
 
-    let mut key_output = Output::new(configuration.clone(), plugin_config, metadata, None)?;
+    let key_output = Output::new(configuration.clone(), plugin_config, metadata, None)?;
 
     let mut report = RunReport::new();
-    parse_subvalues(
-        root_key,
-        &root_name,
-        &mut key_output,
-        &regex,
-        truncate_values_after,
-        &mut report,
-    )?;
-
-    runner::finalize_output(&mut key_output, &mut report);
+    runner::with_output(key_output, &mut report, |key_output, report| {
+        parse_subvalues(
+            root_key,
+            &root_name,
+            key_output,
+            &regex,
+            truncate_values_after,
+            report,
+        )
+    });
     Ok(report)
 }
 
@@ -628,6 +632,40 @@ mod tests {
     use crate::OutputConfiguration;
 
     use super::*;
+
+    #[test]
+    fn hive_values_empty_plugin_configuration_returns_typed_error_without_opening_input() {
+        let output_conf = OutputConfiguration::new(
+            "empty_hive".to_string(),
+            ".tmp".to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            false,
+            true,
+            HashMap::new(),
+        );
+
+        let report = parse_hive_values(
+            "does-not-exist.hive",
+            RunConfiguration::new(vec![output_conf], true, None),
+            PluginConfiguration::default(),
+            Metadata::new("test".into()),
+            None,
+            None,
+        );
+
+        assert_eq!(report.num_errors, 1);
+        assert!(
+            report
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("Could not retrieve DataTypeMapping")
+        );
+        assert!(report.output_reports.is_empty());
+    }
+
     #[test]
     fn test_parse_hive_keys() {
         let output_folder = ".tmp";

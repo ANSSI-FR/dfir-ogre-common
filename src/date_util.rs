@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc, format::StrftimeItems};
 
 use crate::errors::Error;
 use pyo3::prelude::*;
@@ -110,7 +110,7 @@ pub fn parse_date(input: &str, codec: &DateInputCodec) -> Result<DateTime<Utc>, 
     match codec {
         DateInputCodec::Iso() => Ok(DateTime::parse_from_rfc3339(input)?.to_utc()),
         DateInputCodec::Pattern(name) => {
-            if name.contains("%z") {
+            if pattern_has_timezone(name) {
                 Ok(DateTime::parse_from_str(input, name)?.to_utc())
             } else {
                 let parsed = NaiveDateTime::parse_from_str(input, name)?;
@@ -154,6 +154,36 @@ pub fn parse_date(input: &str, codec: &DateInputCodec) -> Result<DateTime<Utc>, 
         }
     }
 }
+
+fn pattern_has_timezone(pattern: &str) -> bool {
+    let mut chars = pattern.chars().peekable();
+
+    while let Some(character) = chars.next() {
+        if character != '%' {
+            continue;
+        }
+
+        match chars.next() {
+            // A doubled percent sign is a literal percent, not a directive.
+            Some('%') | None => {}
+            Some('z' | 'Z' | '+') => return true,
+            Some('#') => {
+                if chars.next() == Some('z') {
+                    return true;
+                }
+            }
+            Some(':') => {
+                while chars.next_if_eq(&':').is_some() {}
+                if chars.next() == Some('z') {
+                    return true;
+                }
+            }
+            Some(_) => {}
+        }
+    }
+
+    false
+}
 /// Defines supported formats for serializing date objects
 #[derive(Debug, Clone)]
 #[pyclass(from_py_object)]
@@ -194,6 +224,18 @@ impl DateOutputCodec {
             _ => DateOutputCodec::Pattern(name.to_owned()),
         }
     }
+
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if let DateOutputCodec::Pattern(pattern) = self {
+            StrftimeItems::new(pattern).parse().map_err(|error| {
+                Error::ConfigurationError(format!(
+                    "Invalid date output pattern '{pattern}': {error}"
+                ))
+            })?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Serializes a `DateTime<Utc>` into a formatted string using the specified codec.
@@ -212,7 +254,9 @@ pub fn serialize_date(date: &DateTime<Utc>, date_format: &DateOutputCodec) -> St
         DateOutputCodec::Iso() => date.to_utc().format("%Y-%m-%dT%H:%M:%S%.6f%:z").to_string(),
         DateOutputCodec::IsoUtc() => date.to_utc().format("%Y-%m-%dT%H:%M:%S%.6f%:z").to_string(),
         DateOutputCodec::UtcNaive() => date.naive_utc().format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
-        DateOutputCodec::Pattern(pattern) => date.format(pattern).to_string(),
+        DateOutputCodec::Pattern(pattern) => date
+            .format_with_items(StrftimeItems::new_lenient(pattern))
+            .to_string(),
     }
 }
 
@@ -294,6 +338,41 @@ mod tests {
         let output_codec = DateOutputCodec::from_string("iso_utc");
         let serialized = serialize_date(&date, &output_codec);
         assert_eq!(serialized, "1996-12-20T00:39:57.123000+00:00");
+    }
+
+    #[test]
+    fn custom_timezone_patterns_preserve_offsets() {
+        let cases = [
+            ("%Y-%m-%d %H:%M:%S %:z", "1996-12-19 16:39:57 -08:00"),
+            ("%Y-%m-%d %H:%M:%S %#z", "1996-12-19 16:39:57 -08"),
+            ("%+", "1996-12-19T16:39:57-08:00"),
+        ];
+
+        for (pattern, input) in cases {
+            let date = parse_date(input, &DateInputCodec::Pattern(pattern.to_owned())).unwrap();
+            assert_eq!(date.to_rfc3339(), "1996-12-20T00:39:57+00:00");
+        }
+    }
+
+    #[test]
+    fn escaped_timezone_directive_remains_naive() {
+        let date = parse_date(
+            "%z 1996-12-19 16:39:57",
+            &DateInputCodec::Pattern("%%z %Y-%m-%d %H:%M:%S".to_owned()),
+        )
+        .unwrap();
+
+        assert_eq!(date.to_rfc3339(), "1996-12-19T16:39:57+00:00");
+    }
+
+    #[test]
+    fn invalid_output_pattern_is_rejected() {
+        let codec = DateOutputCodec::Pattern("%Y-%Q".to_owned());
+
+        assert!(matches!(
+            codec.validate(),
+            Err(Error::ConfigurationError(_))
+        ));
     }
 
     /// 1. A Unix timestamp in seconds is correctly parsed into a DateTime<Utc>.

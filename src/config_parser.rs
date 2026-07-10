@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use pyo3::prelude::*;
 
-use crate::output::OutputReport;
+use crate::{Error, output::OutputReport};
 use log::error;
 /// Holds the command a plugin runs and a short description of its purpose.
 #[derive(Debug, Clone)]
@@ -140,6 +140,19 @@ impl RunConfiguration {
     }
 }
 
+impl RunConfiguration {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if self.output.is_empty() {
+            return Err(Error::ConfigurationError(
+                "invalid run configuration, it requires at least one output configuration"
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Default)]
 #[pyclass(get_all)]
 /// Summary of a parsing run.
@@ -249,6 +262,16 @@ mod tests {
         assert!(config.output.is_empty());
         assert!(config.force_snake_case);
         assert_eq!(config.params, params);
+    }
+
+    #[test]
+    fn run_configuration_validation_rejects_empty_outputs() {
+        let config = RunConfiguration::new(vec![], true, None);
+
+        let error = config.validate().unwrap_err();
+
+        assert!(matches!(error, Error::ConfigurationError(_)));
+        assert!(error.to_string().contains("at least one output"));
     }
 
     #[test]

@@ -152,6 +152,11 @@ impl Parser {
                 Some(Value::Int(value))
             }
             Parser::IntRadix(radix) => {
+                if !(2..=36).contains(radix) {
+                    return Err(Error::ConfigurationError(format!(
+                        "Invalid integer radix '{radix}', expected a value from 2 to 36"
+                    )));
+                }
                 let value = if input.starts_with("0x") {
                     let inp = input.replacen("0x", "", 1);
                     i64::from_str_radix(&inp, *radix)?
@@ -1223,6 +1228,14 @@ mod tests {
         if let &Value::Date(_) = &output.get("value").unwrap() {
         } else {
             panic!("should be a Date");
+        }
+    }
+
+    #[test]
+    fn int_radix_rejects_out_of_range_values_without_panicking() {
+        for radix in [0, 1, 37, u32::MAX] {
+            let error = Parser::IntRadix(radix).get_value(Some("10")).unwrap_err();
+            assert!(matches!(error, Error::ConfigurationError(_)));
         }
     }
 

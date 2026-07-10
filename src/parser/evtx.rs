@@ -35,6 +35,8 @@ pub fn parse(
     plugin_config: PluginConfiguration,
     metadata: Metadata,
 ) -> Result<RunReport, Error> {
+    runner::validate_configuration(&run_config, &plugin_config)?;
+
     let data_type_config = &plugin_config.get_data_type_mapping(None)?;
     let parser_tree = data_type_config
         .field_mapping
@@ -49,26 +51,27 @@ pub fn parse(
     let mut parser = parser.with_configuration(settings);
 
     let mut report = RunReport::new();
-    let mut output = Output::new(run_config, plugin_config, metadata, None)?;
+    let output = Output::new(run_config, plugin_config, metadata, None)?;
     let mut evt_number = 0;
     let mut tuple = Record::new();
-    for record in parser.records_json_value() {
-        evt_number += 1;
-        match record {
-            Ok(rec) => {
-                let timestamp_micro = rec.timestamp.as_microsecond();
-                if let Some(dt) = DateTime::from_timestamp_micros(timestamp_micro) {
-                    tuple.add(TIMESTAMP_FIELD, Value::Date(dt));
-                };
+    runner::with_output(output, &mut report, |output, report| {
+        for record in parser.records_json_value() {
+            evt_number += 1;
+            match record {
+                Ok(rec) => {
+                    let timestamp_micro = rec.timestamp.as_microsecond();
+                    if let Some(dt) = DateTime::from_timestamp_micros(timestamp_micro) {
+                        tuple.add(TIMESTAMP_FIELD, Value::Date(dt));
+                    };
 
-                parse_record(rec, &mut tuple, &mut output, &parser_tree, &mut report);
-            }
-            Err(e) => report.add_error(format!("{e}, Event number: {evt_number}")),
-        };
-        tuple.clear();
-    }
-
-    runner::finalize_output(&mut output, &mut report);
+                    parse_record(rec, &mut tuple, output, &parser_tree, report);
+                }
+                Err(e) => report.add_error(format!("{e}, Event number: {evt_number}")),
+            };
+            tuple.clear();
+        }
+        Ok(())
+    });
     Ok(report)
 }
 

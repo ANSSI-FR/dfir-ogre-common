@@ -7,7 +7,7 @@ use crate::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as enc64};
 
 use pyo3::prelude::*;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 /// Parses an SQLite database file using the provided query and configuration.
 ///
@@ -52,7 +52,9 @@ pub fn parse(
     metadata: Metadata,
     log_before_fail: usize,
 ) -> Result<RunReport, Error> {
-    let conn = Connection::open(input_file)?;
+    runner::validate_configuration(&configuration, &plugin_config)?;
+
+    let conn = Connection::open_with_flags(input_file, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let data_mapping = &plugin_config.get_data_type_mapping(None)?;
     let field_mapping = data_mapping
         .field_mapping
@@ -71,7 +73,7 @@ pub fn parse(
 
     let mut stmt = conn.prepare(&query)?;
 
-    let mut output = Output::new(configuration, plugin_config, metadata, None)?;
+    let output = Output::new(configuration, plugin_config, metadata, None)?;
 
     let column_names: Vec<String> = {
         stmt.column_names()
@@ -81,34 +83,35 @@ pub fn parse(
     };
     let mut report = RunReport::new();
     let mut record = Record::new();
-    let mut rows = stmt.query([])?;
     let mut num_row = 0;
     let mut multi_input_context = MultiInputContext::new(field_parsers.multi_input_group_count);
 
-    while let Some(row) = rows.next()? {
-        multi_input_context.clear();
-        if let Err(err) = process_row(
-            &mut output,
-            &column_names,
-            &mut record,
-            row,
-            &mut field_parsers,
-            &mut multi_input_context,
-        ) {
-            record.clear();
-
-            if runner::record_error(
-                &mut report,
-                format!("Line {num_row}, error: {err}"),
-                log_before_fail,
+    runner::with_output(output, &mut report, |output, report| {
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            multi_input_context.clear();
+            if let Err(err) = process_row(
+                output,
+                &column_names,
+                &mut record,
+                row,
+                &mut field_parsers,
+                &mut multi_input_context,
             ) {
-                break;
-            }
-        }
-        num_row += 1;
-    }
+                record.clear();
 
-    runner::finalize_output(&mut output, &mut report);
+                if runner::record_error(
+                    report,
+                    format!("Line {num_row}, error: {err}"),
+                    log_before_fail,
+                ) {
+                    break;
+                }
+            }
+            num_row += 1;
+        }
+        Ok(())
+    });
     Ok(report)
 }
 
@@ -166,12 +169,13 @@ fn process_row(
 #[cfg(test)]
 mod tests {
 
-    use std::{collections::HashMap, fs, path::Path};
+    use std::{collections::HashMap, fs, io::Read, path::Path};
 
     use crate::{
         Field, FieldMapping, FieldName, OutputConfiguration, Parser,
         configuration::DataTypeMapping, date_util::DateInputCodec,
     };
+    use flate2::read::GzDecoder;
 
     use super::*;
 
@@ -180,6 +184,31 @@ mod tests {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
+    fn sqlite_plugin_config(data_type: &str, query: &str, parser: Parser) -> PluginConfiguration {
+        let mut params = HashMap::new();
+        params.insert("query".to_owned(), query.to_owned());
+        PluginConfiguration {
+            plugin: "sqlite-test".to_owned(),
+            file_encoding: "UTF_8".to_owned(),
+            data_type_configs: vec![DataTypeMapping {
+                data_type: data_type.to_owned(),
+                description: None,
+                default_date_pattern: DateInputCodec::Iso(),
+                params,
+                timeline: None,
+                field_mapping: Some(FieldMapping::new(
+                    vec![Field::Single {
+                        name: FieldName::new("value".to_owned(), false, None, None, None),
+                        parser,
+                        default_value: None,
+                    }],
+                    None,
+                )),
+                has_primary_key: false,
+            }],
         }
     }
 
@@ -374,6 +403,161 @@ mod tests {
             .collect();
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0]["value"], 1);
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn sqlite_parser_does_not_create_a_missing_input_database() {
+        let output_folder = Path::new(".tmp").join("sqlite_missing_input");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let missing_path = output_folder.join("missing.db");
+
+        let output_conf = OutputConfiguration::new(
+            "missing".to_owned(),
+            output_folder.display().to_string(),
+            "file".to_owned(),
+            "jsonl".to_owned(),
+            "iso".to_owned(),
+            false,
+            true,
+            HashMap::new(),
+        );
+        let result = parse(
+            missing_path.to_str().unwrap(),
+            RunConfiguration::new(vec![output_conf], true, None),
+            sqlite_plugin_config("missing", "SELECT value FROM events", Parser::String()),
+            Metadata::new("test".into()),
+            0,
+        );
+
+        assert!(matches!(result, Err(Error::Sqlite(_))));
+        assert!(!missing_path.exists());
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn sqlite_parser_rejects_writes_and_preserves_source_data() {
+        let output_folder = Path::new(".tmp").join("sqlite_read_only");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let db_path = output_folder.join("source.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute("CREATE TABLE events (value TEXT)", [])
+            .unwrap();
+        conn.execute("INSERT INTO events (value) VALUES ('original')", [])
+            .unwrap();
+        drop(conn);
+
+        let output_conf = OutputConfiguration::new(
+            "readonly".to_owned(),
+            output_folder.display().to_string(),
+            "file".to_owned(),
+            "jsonl".to_owned(),
+            "iso".to_owned(),
+            false,
+            true,
+            HashMap::new(),
+        );
+        let mut params = HashMap::new();
+        params.insert(
+            "query".to_owned(),
+            "UPDATE events SET value = 'changed' RETURNING value".to_owned(),
+        );
+        let plugin_config = PluginConfiguration {
+            plugin: "sqlite-test".to_owned(),
+            file_encoding: "UTF_8".to_owned(),
+            data_type_configs: vec![DataTypeMapping {
+                data_type: "readonly".to_owned(),
+                description: None,
+                default_date_pattern: DateInputCodec::Iso(),
+                params,
+                timeline: None,
+                field_mapping: Some(FieldMapping::new(
+                    vec![Field::Single {
+                        name: FieldName::new("value".to_owned(), false, None, None, None),
+                        parser: Parser::String(),
+                        default_value: None,
+                    }],
+                    None,
+                )),
+                has_primary_key: false,
+            }],
+        };
+
+        let report = parse(
+            db_path.to_str().unwrap(),
+            RunConfiguration::new(vec![output_conf], true, None),
+            plugin_config,
+            Metadata::new("test".into()),
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(report.num_errors, 1);
+        assert!(report.last_error.as_deref().unwrap().contains("readonly"));
+        assert_eq!(report.output_reports.len(), 1);
+        let conn = Connection::open(&db_path).unwrap();
+        let value: String = conn
+            .query_row("SELECT value FROM events", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "original");
+
+        drop(conn);
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn sqlite_runtime_error_still_finalizes_partial_gzip_output() {
+        let output_folder = Path::new(".tmp").join("sqlite_finalize_on_error");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let db_path = output_folder.join("source.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute("CREATE TABLE events (id INTEGER)", [])
+            .unwrap();
+        conn.execute("INSERT INTO events (id) VALUES (1), (2)", [])
+            .unwrap();
+        drop(conn);
+
+        let output_conf = OutputConfiguration::new(
+            "partial".to_owned(),
+            output_folder.display().to_string(),
+            "gzip".to_owned(),
+            "jsonl".to_owned(),
+            "iso".to_owned(),
+            false,
+            true,
+            HashMap::new(),
+        );
+        let query = "SELECT CASE id WHEN 1 THEN 'first' ELSE abs(-9223372036854775808) END AS value FROM events";
+
+        let report = parse(
+            db_path.to_str().unwrap(),
+            RunConfiguration::new(vec![output_conf], true, None),
+            sqlite_plugin_config("partial", query, Parser::String()),
+            Metadata::new("test".into()),
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(report.num_errors, 1);
+        assert!(report.last_error.as_deref().unwrap().contains("overflow"));
+        assert_eq!(report.output_reports.len(), 1);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 1);
+
+        let gzip_path = output_folder.join("partial.partial.jsonl.gz");
+        let mut decoded = String::new();
+        GzDecoder::new(fs::File::open(gzip_path).unwrap())
+            .read_to_string(&mut decoded)
+            .unwrap();
+        let lines: Vec<serde_json::Value> = decoded
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["value"], "first");
 
         remove_dir_if_exists(&output_folder);
     }

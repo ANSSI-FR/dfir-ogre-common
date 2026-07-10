@@ -63,6 +63,8 @@ fn parse(
     metadata: Metadata,
     log_before_fail: usize,
 ) -> Result<RunReport, Error> {
+    runner::validate_configuration(&run_config, &plugin_config)?;
+
     let file_handle = File::open(Path::new(input_file))
         .map_err(|e| Error::FileRead(input_file.to_string(), e.to_string()))?;
 
@@ -109,18 +111,20 @@ fn parse(
         converters.push(field_parsers.get_parser(field_name));
     }
 
-    let mut output = Output::new(run_config, plugin_config, metadata, None)?;
+    let output = Output::new(run_config, plugin_config, metadata, None)?;
     let mut run_report = RunReport::new();
     let mut multi_input_context = MultiInputContext::new(field_parsers.multi_input_group_count);
-    parse_lines(
-        reader,
-        &mut converters,
-        &mut output,
-        log_before_fail,
-        &mut run_report,
-        &mut multi_input_context,
-    );
-    runner::finalize_output(&mut output, &mut run_report);
+    runner::with_output(output, &mut run_report, |output, run_report| {
+        parse_lines(
+            reader,
+            &mut converters,
+            output,
+            log_before_fail,
+            run_report,
+            &mut multi_input_context,
+        );
+        Ok(())
+    });
 
     Ok(run_report)
 }

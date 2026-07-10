@@ -226,6 +226,7 @@ impl Output {
         mut metadata: Metadata,
         data_type: Option<String>,
     ) -> Result<Self, Error> {
+        run_config.validate()?;
         let data_type_conf = Output::select_datatype(&plugin_config, data_type)?;
         metadata.data_type = data_type_conf.data_type.clone();
         //series of flag that defines what needs to be computed
@@ -235,14 +236,27 @@ impl Output {
 
         for output_conf in &run_config.output {
             let output_date_codec = DateOutputCodec::from_string(output_conf.date_format.as_str());
+            output_date_codec.validate()?;
             let output_format = OutputFormat::from_str(&output_conf.format)?;
             let output_type = OutputType::from_str(&output_conf.output_type)?;
+
+            if matches!(
+                &output_format,
+                OutputFormat::NormalizedJsonl | OutputFormat::NormalizedCsv
+            ) {
+                compute_hash = true;
+            }
 
             let compression_level = output_conf.params.get(COMPRESSION_LEVEL);
             let compression_level: u32 = match compression_level {
                 Some(c) => c.parse()?,
                 None => DEFAULT_COMPRESSION_LEVEL,
             };
+            if compression_level > 9 {
+                return Err(Error::ConfigurationError(format!(
+                    "Invalid compression level '{compression_level}', expected a value from 0 to 9"
+                )));
+            }
 
             if output_conf.with_timeline {
                 compute_timeline = true
@@ -310,7 +324,6 @@ impl Output {
                     OutputWriter::Csv(Arc::new(Mutex::new(csv)))
                 }
                 OutputFormat::NormalizedCsv => {
-                    compute_hash = true;
                     let csv = CsvFormatter::new(
                         data_type_conf.field_mapping.clone(),
                         output_type,
@@ -401,8 +414,8 @@ impl Output {
 mod tests {
     use super::*;
     use crate::{
-        DateInputCodec, Field, FieldName, OutputConfiguration, Parser, Value,
-        configuration::DataTypeMapping, format_csv::CSV_DELIMITER,
+        DateInputCodec, Field, FieldName, OutputConfiguration, Parser, TimeLineBuilder,
+        TimeLineType, Value, configuration::DataTypeMapping, format_csv::CSV_DELIMITER,
     };
     use std::{
         collections::HashMap,
@@ -610,6 +623,79 @@ mod tests {
     }
 
     #[test]
+    fn normalized_jsonl_alone_generates_data_and_timeline_ids() {
+        let output_folder = test_output_folder("output_normalized_json_only");
+        let base_file_name = "json_only";
+        let event_field = Field::Single {
+            name: FieldName::new("event".to_owned(), false, None, None, None),
+            parser: Parser::String(),
+            default_value: None,
+        };
+        let timestamp_field = Field::Single {
+            name: FieldName::new("when".to_owned(), false, None, None, None),
+            parser: Parser::DateTime(DateInputCodec::Iso()),
+            default_value: None,
+        };
+        let mut plugin_config = mapped_plugin_config(
+            "events",
+            FieldMapping::new(vec![event_field, timestamp_field], None),
+        );
+        let mut timeline =
+            TimeLineBuilder::new(TimeLineType::Standard, "events".to_owned(), 0, None, None);
+        timeline.add_description_ouput_path(vec!["event".to_owned()]);
+        plugin_config.data_type_configs[0].timeline = Some(timeline);
+
+        let output_conf = OutputConfiguration::new(
+            base_file_name.to_owned(),
+            output_folder.display().to_string(),
+            "file".to_owned(),
+            "normalized_jsonl".to_owned(),
+            "iso".to_owned(),
+            true,
+            true,
+            HashMap::new(),
+        );
+        let mut output = Output::new(
+            RunConfiguration::new(vec![output_conf], true, None),
+            plugin_config,
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+        record.add(
+            "when",
+            Value::Date(crate::parse_date("2026-07-10T12:00:00Z", &DateInputCodec::Iso()).unwrap()),
+        );
+
+        output.write(&mut record).unwrap();
+        output.finalize().unwrap();
+
+        let data: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("json_only.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let timeline: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("json_only.events.tl.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+
+        let data_id = data["ogre_id"].as_str().expect("normalized data id");
+        let metadata_id = data["ogre_md_id"].as_str().expect("normalized metadata id");
+        assert!(data_id.len() > 10);
+        assert_eq!(timeline["data_id"], data_id);
+        assert_eq!(timeline["metadata_id"], metadata_id);
+
+        drop(output);
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
     fn output_new_rejects_invalid_compression_level_param() {
         let output_folder = test_output_folder("output_bad_compression");
         let mut params = HashMap::new();
@@ -633,6 +719,64 @@ mod tests {
         );
 
         assert!(result.is_err());
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn output_new_rejects_empty_output_configuration() {
+        let error = Output::new(
+            RunConfiguration::new(vec![], true, None),
+            mapped_plugin_config("events", event_field_mapping()),
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .err()
+        .expect("empty output configuration must be rejected");
+
+        assert!(matches!(error, Error::ConfigurationError(_)));
+        assert!(error.to_string().contains("at least one output"));
+    }
+
+    #[test]
+    fn output_new_rejects_out_of_range_compression_level_param() {
+        let output_folder = test_output_folder("output_bad_compression_range");
+        let mut params = HashMap::new();
+        params.insert(COMPRESSION_LEVEL.to_owned(), "10".to_owned());
+        let mut output_conf = json_output_config("bad_compression_range", &output_folder, params);
+        output_conf.output_type = "gzip".to_owned();
+        let run_config = RunConfiguration::new(vec![output_conf], true, None);
+
+        let error = Output::new(
+            run_config,
+            mapped_plugin_config("events", event_field_mapping()),
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .err()
+        .expect("compression level must be rejected");
+
+        assert!(error.to_string().contains("expected a value from 0 to 9"));
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn output_new_rejects_invalid_date_output_pattern() {
+        let output_folder = test_output_folder("output_bad_date_pattern");
+        let mut output_conf =
+            json_output_config("bad_date_pattern", &output_folder, HashMap::new());
+        output_conf.date_format = "%Y-%Q".to_owned();
+        let run_config = RunConfiguration::new(vec![output_conf], true, None);
+
+        let error = Output::new(
+            run_config,
+            mapped_plugin_config("events", event_field_mapping()),
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .err()
+        .expect("invalid date pattern must be rejected");
+
+        assert!(error.to_string().contains("Invalid date output pattern"));
         remove_dir_if_exists(&output_folder);
     }
 

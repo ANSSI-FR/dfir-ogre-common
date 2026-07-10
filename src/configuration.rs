@@ -700,8 +700,13 @@ fn get_parser(
         "IntRadix" => {
             let radix = elem.attributes.get("radix").cloned();
             match radix {
-                Some(s) => match s.parse() {
-                    Ok(radix) => Parser::IntRadix(radix),
+                Some(s) => match s.parse::<u32>() {
+                    Ok(radix) if (2..=36).contains(&radix) => Parser::IntRadix(radix),
+                    Ok(_) => {
+                        return Err(Error::ConfigurationError(format!(
+                            "Invalid radix value '{s}', expected a value from 2 to 36. Field: '{input_name}'"
+                        )));
+                    }
                     Err(_) => {
                         return Err(Error::ConfigurationError(format!(
                             "Invalid radix value '{s}' it expects a valid unsigned integer. Field: '{}'",
@@ -970,6 +975,24 @@ mod tests {
             panic!("expected single field");
         };
         assert!(!name.primary_key);
+    }
+
+    #[test]
+    fn int_radix_configuration_rejects_out_of_range_values() {
+        for radix in ["0", "1", "37", "4294967295"] {
+            let xml = format!(
+                r#"<plugin parser="Test">
+                    <mapping data_type="test">
+                        <fields>
+                            <field input="Value" parser="IntRadix" radix="{radix}" />
+                        </fields>
+                    </mapping>
+                </plugin>"#
+            );
+
+            let message = configuration_error(&xml);
+            assert!(message.contains("expected a value from 2 to 36"));
+        }
     }
 
     #[test]

@@ -72,6 +72,8 @@ fn parse(
     metadata: Metadata,
     log_before_fail: usize,
 ) -> Result<RunReport, Error> {
+    runner::validate_configuration(&run_config, &plugin_config)?;
+
     let data_mapping = &plugin_config.get_data_type_mapping(None)?;
     let field_mapping = data_mapping
         .field_mapping
@@ -148,7 +150,7 @@ fn parse(
 
     //Compile the regex pattern from the configuration
     let re = Regex::new(&regex)?;
-    let mut output = Output::new(run_config, plugin_config, metadata, None)?;
+    let output = Output::new(run_config, plugin_config, metadata, None)?;
 
     //build a field parser map because the captured values by the regexp dannot be interated over ther name
     let mut field_map: HashMap<String, FieldParser> = HashMap::new();
@@ -166,35 +168,37 @@ fn parse(
     let mut record = Record::new();
     let mut line_number = 0;
 
-    while reader.read_line(&mut line)? > 0 {
-        if line_number >= skip_lines
-            && let Err(e) = build_record(
-                last_field_name,
-                &mut field_map,
-                &regex,
-                &re,
-                &mut output,
-                &line,
-                &mut record,
-                line_number,
-                &fail_policy,
-                &mut multi_input_context,
-            )
-        {
-            record.clear();
-            if runner::record_error(&mut run_report, e.to_string(), log_before_fail) {
-                break;
+    runner::with_output(output, &mut run_report, |output, run_report| {
+        while reader.read_line(&mut line)? > 0 {
+            if line_number >= skip_lines
+                && let Err(e) = build_record(
+                    last_field_name,
+                    &mut field_map,
+                    &regex,
+                    &re,
+                    output,
+                    &line,
+                    &mut record,
+                    line_number,
+                    &fail_policy,
+                    &mut multi_input_context,
+                )
+            {
+                record.clear();
+                if runner::record_error(run_report, e.to_string(), log_before_fail) {
+                    break;
+                }
             }
-        }
 
-        line_number += 1;
-        line.clear();
-    }
-    // Write any remaining data in the record to output
-    if !record.0.is_empty() {
-        output.write(&mut record)?;
-    }
-    runner::finalize_output(&mut output, &mut run_report);
+            line_number += 1;
+            line.clear();
+        }
+        // Write any remaining data in the record to output
+        if !record.0.is_empty() {
+            output.write(&mut record)?;
+        }
+        Ok(())
+    });
     Ok(run_report)
 }
 
