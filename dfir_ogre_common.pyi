@@ -27,37 +27,37 @@ class DateInputCodec:
     """Defines supported input formats for parsing date strings"""
 
     @classmethod
-    def Iso(cls):
+    def Iso(cls) -> DateInputCodec:
         """A codec that parses date strings in ISO 8601 format (e.g., '2023-12-31T23:59:59')."""
         ...
 
     @classmethod
-    def FileTime(cls):
+    def FileTime(cls) -> DateInputCodec:
         """A codec that parses date strings as Windows File Time in seconds (e.g., 133210364868558102)."""
         ...
 
     @classmethod
-    def Timestamp(cls):
+    def Timestamp(cls) -> DateInputCodec:
         """A codec that parses date strings as Unix timestamps in seconds (e.g., 1703654400)."""
         ...
 
     @classmethod
-    def TimestampHex(cls):
+    def TimestampHex(cls) -> DateInputCodec:
         """A codec that parses Unix timestamps in hexadecimal seconds (e.g., '0x5010ad0a')."""
         ...
 
     @classmethod
-    def TimestampMs(cls):
+    def TimestampMs(cls) -> DateInputCodec:
         """A codec that parses date strings as Unix timestamps in milliseconds (e.g., 1704067199000)."""
         ...
 
     @classmethod
-    def TimestampNs(cls):
+    def TimestampNs(cls) -> DateInputCodec:
         """A codec that parses date strings as Unix timestamps in nanosecond (e.g., 1703664000123456789)."""
         ...
 
     @classmethod
-    def Pattern(cls, value: str):
+    def Pattern(cls, value: str) -> DateInputCodec:
         """A codec that parses date strings using the given format pattern (e.g., '%Y-%m-%d %H:%M:%S')."""
         ...
 
@@ -65,22 +65,22 @@ class DateOutputCodec:
     """Defines supported output formats for serializing date objects"""
 
     @classmethod
-    def Iso(cls):
+    def Iso(cls) -> DateOutputCodec:
         """A codec that serializes date objects into ISO 8601 format (e.g., '2023-12-31T23:59:59')."""
         ...
 
     @classmethod
-    def IsoUtc(cls):
+    def IsoUtc(cls) -> DateOutputCodec:
         """A codec that serializes date objects into ISO 8601 format with UTC timezone (e.g., '2023-12-31T23:59:59Z')."""
         ...
 
     @classmethod
-    def UtcNaive(cls):
+    def UtcNaive(cls) -> DateOutputCodec:
         """A codec that serializes date objects into ISO 8601 format without timezone, assuming UTC (e.g., '2023-12-31T23:59:59')."""
         ...
 
     @classmethod
-    def Pattern(cls, value: str):
+    def Pattern(cls, value: str) -> DateOutputCodec:
         """A codec that serializes date objects using the given format pattern (e.g., '%Y-%m-%d %H:%M:%S')."""
         ...
 
@@ -90,7 +90,9 @@ class Field:
     Each variant defines how data should be parsed and transformed."""
 
     @classmethod
-    def Single(cls, name: FieldName, parser: Parser, default_value: Optional[str]):
+    def Single(
+        cls, name: FieldName, parser: Parser, default_value: Optional[str]
+    ) -> Field:
         """Create a field with a single input field with a given name and parser.
 
         Args:
@@ -102,7 +104,7 @@ class Field:
         ...
 
     @classmethod
-    def Multi(cls, value: MultiInputField):
+    def Multi(cls, value: MultiInputField) -> Field:
         """Create a field that requires multiple input
         Args:
             value: A MultiInputField object that defines the structure and parsing behavior for the multi-field.
@@ -111,7 +113,7 @@ class Field:
         ...
 
     @classmethod
-    def Array(cls, value: ArrayField):
+    def Array(cls, value: ArrayField) -> Field:
         """Represents an array field in the data model.
         This variant is used to handle collections of values, where each element
         is processed using the `ArrayField` configuration.
@@ -119,7 +121,9 @@ class Field:
         ...
 
     @classmethod
-    def Object(cls, name: FieldName, fields: list[Field], ignore: bool = False):
+    def Object(
+        cls, name: FieldName, fields: List[Field], ignore: bool = False
+    ) -> Field:
         """Create an object field with a given name and a list of nested fields.
 
         This variant allows for hierarchical data structures by grouping multiple fields under a single name.
@@ -230,7 +234,7 @@ class FieldMapping:
         """
         ...
 
-    def get_parser_subtree(self, path: List[str]) -> Optional[FieldParserTree]:
+    def get_parser_subtree(self, input_name: str) -> Optional[FieldParserTree]:
         """Retrieves a nested `FieldParserTree` for a specific field name, if it exists.
 
         This method allows access to the parser hierarchy for nested object fields. This is useful for working with hierarchical data structures where
@@ -352,7 +356,7 @@ class FilesToExtract:
     output_path: str Filename (relative to the output folder) where the entry should be written.
     """
 
-    def len(self) -> int:...
+    def len(self) -> int: ...
     """
     Returns the number of files to be extracted
     """
@@ -380,13 +384,13 @@ class Metadata:
     archive: Optional[str]
     subarchive: Optional[str]
     archive_filename: Optional[str]
-    original_filename:Optional[str]
+    original_filename: Optional[str]
     vss: Optional[str]
     orc_start_date: Optional[datetime]
     creation_date: Optional[datetime]
     modif_date: Optional[datetime]
 
-    def __init__(self,computer:str ) -> None: ...
+    def __init__(self, computer: str) -> None: ...
 
 
 class MultiInputField:
@@ -415,13 +419,14 @@ class MultiParser:
     into a single string value."""
 
     @classmethod
-    def Join(cls, separator: str, trim: bool = False):
+    def Join(cls, separator: str, avoid_duplication: bool) -> MultiParser:
         """This parser combines the values from multiple input fields into one string,
-        using the specified separator between values. Optionally trims whitespace
-        from each input before joining.
+        using the specified separator between values.
+
         Args:
             separator: The string to use as a delimiter between input values.
-            trim: If True, removes leading and trailing whitespace from each input value before joining.
+            avoid_duplication: If True, avoids adding the separator when adjacent
+                values already contain it at their boundary.
 
         """
         ...
@@ -432,6 +437,8 @@ class OgrePlugin:
 
     Subclasses **must** implement the `parse` and `description` methods.
     """
+    def __init__(self) -> None: ...
+
     def description(self) -> PluginDescription:
         """Return a description of the plugin's purpose and functionality.
 
@@ -473,6 +480,8 @@ class OgreBatchedPlugin:
     Subclasses **must** implement the :meth:`parse` and :meth:`description`
     methods.
     """
+    def __init__(self) -> None: ...
+
     def description(self) -> PluginDescription:
       """Return a description of the plugin's purpose and functionality.
 
@@ -539,7 +548,7 @@ class Output:
         """
         ...
 
-    def write(self, data: Record):
+    def write(self, data: Record) -> None:
         """Writes the provided data to all configured output destinations.
 
         This method processes the Record of parsed values and writes them to the configured outputs
@@ -594,7 +603,7 @@ class OutputConfiguration:
         """
         ...
 
-    def __deepcopy__(self, _memo: Any):
+    def __deepcopy__(self, _memo: Any) -> OutputConfiguration:
         """Return a deep copy of this OutputConfiguration instance.
 
         Args:
@@ -813,22 +822,22 @@ class Parser:
     date parsing, string splitting, and Python-based parsing.
     """
     @classmethod
-    def Ignore(cls):
+    def Ignore(cls) -> Parser:
         """A parser that ignores the input field entirely, resulting in no output."""
         ...
 
     @classmethod
-    def Dynamic(cls, parsers: List[Parser]):
+    def Dynamic(cls, parsers: List[Parser]) -> Parser:
         """try each parsers in the list in order and returns the first successfull parse"""
         ...
 
     @classmethod
-    def Int(cls):
+    def Int(cls) -> Parser:
         """A parser that converts the input field to an integer value."""
         ...
 
     @classmethod
-    def IntRadix(cls, radix: int):
+    def IntRadix(cls, radix: int) -> Parser:
         """A parser that converts the input field to an integer using the specified radix (base).
 
         Args:
@@ -837,40 +846,40 @@ class Parser:
         ...
 
     @classmethod
-    def IntToHex(cls, width: int):
+    def IntToHex(cls, width: int) -> Parser:
         """parse the input as a signed 64-bit integer and convert it to hexadecimal string with configurable width for zero-padding.
         - width = 0: no padding, width > 0: pad with leading zeros
         """
         ...
 
     @classmethod
-    def Float(cls):
+    def Float(cls) -> Parser:
         """A parser that converts the input field to a floating-point number."""
         ...
 
     @classmethod
-    def Bool(cls):
+    def Bool(cls) -> Parser:
         """A parser that converts the input field to a boolean value.
         Treats 'false', '0', 'no', 'n', '','off' as False, everything else is considered to be True"""
         ...
 
     @classmethod
-    def String(cls):
+    def String(cls) -> Parser:
         """A parser that preserves the input field as a string without modification."""
         ...
 
     @classmethod
-    def StringToLower(cls):
+    def StringToLower(cls) -> Parser:
         """A parser that convert the input string to lowercase"""
         ...
 
     @classmethod
-    def StringToUpper(cls):
+    def StringToUpper(cls) -> Parser:
         """A parser that convert the input string to uppercase"""
         ...
 
     @classmethod
-    def DateTime(cls, codec: DateInputCodec):
+    def DateTime(cls, codec: DateInputCodec) -> Parser:
         """A parser that converts the input field into a datetime object using the specified date codec.
 
         Args:
@@ -879,7 +888,7 @@ class Parser:
         ...
 
     @classmethod
-    def Split(cls, separator: str):
+    def Split(cls, separator: str) -> Parser:
         """A parser that splits the input field into a list of strings using the given separator.
 
         Args:
@@ -888,7 +897,7 @@ class Parser:
         ...
 
     @classmethod
-    def Python(cls, parser: PyParser):
+    def Python(cls, parser: PyParser) -> Parser:
         """A parser that executes a custom Python function to transform the input.
 
         Args:
@@ -896,10 +905,16 @@ class Parser:
         """
         ...
 
+    @classmethod
+    def Extension(cls, parser: ParserExtension) -> Parser:
+        """A parser implemented by a registered Rust parser extension."""
+        ...
+
 class PluginConfiguration:
     """This every mapping available for a specific Plugin"""
 
     plugin: str
+    file_encoding: str
     data_type_configs: List[DataTypeMapping]
 
     @classmethod
@@ -938,11 +953,11 @@ class DataTypeMapping:
 
     data_type: str
     description: Optional[str]
-    file_encoding: Optional[str]
     default_date_pattern: DateInputCodec
     params: Dict[str, str]
     timeline: Optional[TimeLineBuilder]
     field_mapping: Optional[FieldMapping]
+    has_primary_key: bool
 
 class PluginDescription:
     """
@@ -974,7 +989,8 @@ class PyParser:
 class AbstractParser:
     """define function required to implement a custom python parser"""
 
-    def parse(self, input: str, ouput_name: str) -> Optional[Record]: ...
+    def __init__(self) -> None: ...
+    def parse(self, input: str, output_name: str) -> Record: ...
     def output_fields_names(self) -> List[FieldName]: ...
 
 class RegValue:
@@ -1115,9 +1131,9 @@ class RunConfiguration:
     def __init__(
         self,
         output: List[OutputConfiguration],
-        force_snake_case: bool = False,
+        force_snake_case: bool = True,
         params: Optional[Dict[str, Optional[str]]] = None,
-    ):
+    ) -> None:
         """
         Args:
             output: A list of OutputConfiguration objects that define the output formats and settings.
@@ -1130,12 +1146,10 @@ class TimeLineType:
     """Enumeration of supported timeline types for timestamp interpretation .
 
     - MacbMacb: A timeline format that includes height timestamps that provides two M-A-C-B, one for the standard file timestamps and one for the pe timestamps
-    - Macb: A timeline format that includes the four timestamps (M, A, C, B) in the order M-A-C-B, commonly used in file system forensics.
     - Standard: A standard timeline format that accumulates field description.
     """
 
     MacbMacb: Any
-    Macb: Any
     Standard: Any
 
 class TimelineDisplayOptions:
@@ -1145,12 +1159,14 @@ class TimelineDisplayOptions:
     Display Options for the description and additional description fields.
     """
 
+    def __init__(self, include_field_name: bool, field_separator: str) -> None: ...
+
 class TimeLineBuilder:
     """A builder for constructing timeline data structures used in forensic and event analysis.
 
     This class manages the configuration and field definitions required to generate timeline entries,
     including related users, descriptions, and additional metadata. It supports nested field paths
-    and integrates with timeline types such as MacbMacb, Macb, and Standard to provide structured
+    and integrates with timeline types such as MacbMacb and Standard to provide structured
     timestamp interpretations.
 
     The builder allows defining field paths (e.g., 'data.user') and associating them with specific
@@ -1159,25 +1175,22 @@ class TimeLineBuilder:
     def __init__(
         self,
         timeline_type: TimeLineType,
-        time_zone: str,
-        source_type: str,
         data_type: str,
         max_date_meaning: int = 0,
         description_format: Optional[TimelineDisplayOptions] = None,
         additional_description_format: Optional[TimelineDisplayOptions] = None,
-    ):
+    ) -> None:
         """Initialize a new TimeLineBuilder instance.
 
         Args:
-            timeline_type: The type of timeline to use (e.g., MacbMacb, Macb, Standard).
-            time_zone: The time zone string (e.g., "UTC", "America/New_York").
-            source_type: The type of source that generated the data (e.g., "file", "evtx").
+            timeline_type: The type of timeline to use (e.g., MacbMacb or Standard).
             data_type: The type of data being processed (e.g., "ntfs", "registry").
             max_date_meaning: The maximum number of field descriptions to include in the meaning of a timestamp.
         """
         ...
-    def add_related_user_ouput_name(self, value: str) -> None:
-        """Add a field name to be used for related user metadata in the timeline."""
+
+    def clear(self) -> None:
+        """Clear values accumulated while building the current timeline record."""
         ...
 
     def add_related_user_ouput_path(self, path: List[str]) -> None:
@@ -1188,20 +1201,12 @@ class TimeLineBuilder:
         """
         ...
 
-    def add_description_ouput_name(self, value: str) -> None:
-        """Add a field name to be used for the primary description in the timeline."""
-        ...
-
     def add_description_ouput_path(self, path: List[str]) -> None:
         """Add a path (e.g., ['data', 'desc']) to be used for the primary description in the timeline.
 
         Args:
             path: A list of strings representing the path to the description field.
         """
-        ...
-
-    def add_additional_description_ouput_name(self, value: str) -> None:
-        """Add a field name to be used for additional description metadata in the timeline."""
         ...
 
     def add_additional_description_ouput_path(self, path: List[str]) -> None:
@@ -1212,15 +1217,19 @@ class TimeLineBuilder:
         """
         ...
 
+    def add_otherwise_description_path(self, path: List[str]) -> None:
+        """Add a fallback description path used when conditional descriptions are empty."""
+        ...
+
 class Record:
     """A wrapper for key-value pairs used in data serialization and parsing.
     This struct is primarily used to represent objects in the data model."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize an empty Record instance."""
         ...
 
-    def add(self, name: str, value: Value):
+    def add(self, name: str, value: Value) -> None:
         """Add a key-value pair to the record.
 
         Args:
@@ -1229,12 +1238,16 @@ class Record:
         """
         ...
 
-    def clear(self):
+    def clear(self) -> None:
         """Removes all entries from the internal map, leaving the `Record` empty, while conserving the map capacity."""
         ...
 
     def len(self) -> int:
         """returns the size of this record"""
+        ...
+
+    def is_empty(self) -> bool:
+        """Return whether this record contains no fields."""
         ...
 
     def to_string(self) -> str: ...
@@ -1252,21 +1265,21 @@ class Value:
         - `Value::Object(Record)` represents a nested object with key-value pairs.
     """
     @classmethod
-    def Null(cls): ...
+    def Null(cls) -> Value: ...
     @classmethod
-    def String(cls, v: str): ...
+    def String(cls, v: str) -> Value: ...
     @classmethod
-    def Array(cls, v: List[Value]): ...
+    def Array(cls, v: List[Value]) -> Value: ...
     @classmethod
-    def Int(cls, v: int): ...
+    def Int(cls, v: int) -> Value: ...
     @classmethod
-    def Float(cls, v: float): ...
+    def Float(cls, v: float) -> Value: ...
     @classmethod
-    def Bool(cls, v: bool): ...
+    def Bool(cls, v: bool) -> Value: ...
     @classmethod
-    def Date(cls, v: datetime): ...
+    def Date(cls, v: datetime) -> Value: ...
     @classmethod
-    def Object(cls, v: Record): ...
+    def Object(cls, v: Record) -> Value: ...
 
 class RunReport:
     """Report for the parser execution results.
@@ -1281,7 +1294,7 @@ class RunReport:
     output_reports: List[OutputReport]
 
     def __init__(self) -> None: ...
-    def add_error(self, error: str): ...
+    def add_error(self, error: str) -> None: ...
     def add_output_report(self, output_report: OutputReport) -> None:
         """Add output results to the report.
 

@@ -532,7 +532,7 @@ impl FieldParserTree {
     ///
     pub fn get_parser_by_path(&mut self, path: Vec<String>) -> Option<FieldParser> {
         let mut parsers_map = &self.parsers;
-        let path_max_pos = path.len() - 1;
+        let path_max_pos = path.len().checked_sub(1)?;
         for (pos, input_name) in path.iter().enumerate() {
             let parser = parsers_map.get(input_name);
 
@@ -929,6 +929,15 @@ mod tests {
                 "unknown".to_owned(),
             ])
             .unwrap();
+    }
+
+    #[test]
+    fn get_parser_by_path_returns_none_for_empty_path() {
+        let mut mapping = FieldMapping::new(field_mapping(), None);
+        let mut tree = mapping.get_field_parser_tree();
+
+        assert!(tree.get_parser_by_path(vec![]).is_none());
+        assert!(mapping.get_parser_by_path(vec![]).is_none());
     }
 
     #[test]
