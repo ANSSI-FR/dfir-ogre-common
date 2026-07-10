@@ -124,6 +124,8 @@ pub struct LineBuilder {
     pub line_data: LineData,
     /// If `true`, compute deterministic identifiers from metadata and line data.
     pub compute_hash: bool,
+    /// If `true`, build a placeholder timeline entry when no valid date was extracted.
+    pub timeline_keep_no_date: bool,
 }
 
 struct LineBuildTraversal<'a> {
@@ -241,6 +243,7 @@ impl LineBuilder {
             force_snake_case,
             line_data: LineData::new(compute_hash, has_primary_keys),
             compute_hash,
+            timeline_keep_no_date: false,
         }
     }
 
@@ -277,7 +280,10 @@ impl LineBuilder {
             true,
         )?;
         if let Some(builder) = &mut self.timeline_builder {
-            builder.to_timelines(&mut self.line_data.timeline)?;
+            builder.build_timelines_with_no_date(
+                &mut self.line_data.timeline,
+                self.timeline_keep_no_date,
+            )?;
         }
 
         if self.compute_hash {
@@ -1360,18 +1366,22 @@ mod tests {
         for timeline in line_builder.line_data.timeline {
             if timeline
                 .timestamp
+                .as_ref()
+                .expect("dated timeline entry")
                 .to_rfc3339()
                 .eq("1995-12-20T00:39:57.123456+00:00")
             {
                 assert_eq!(timeline.timestamp_meaning, "Message Date");
             } else if timeline
                 .timestamp
+                .as_ref()
+                .expect("dated timeline entry")
                 .to_rfc3339()
                 .eq("1997-12-20T00:39:57.123456+00:00")
             {
                 assert_eq!(timeline.timestamp_meaning, "Comment Date");
             } else {
-                panic!("unexpected timestamp: {}", timeline.timestamp);
+                panic!("unexpected timestamp: {:?}", timeline.timestamp);
             }
         }
     }
@@ -1752,7 +1762,7 @@ mod tests {
             "unmapped_date"
         );
         assert!(line_builder.line_data.data.contains_key("unmapped_date"));
-        assert_eq!(line_builder.line_data.timeline[0].timestamp, date);
+        assert_eq!(line_builder.line_data.timeline[0].timestamp, Some(date));
         assert_eq!(
             line_builder.line_data.data.get("unmapped_date"),
             Some(&Value::Date(date))

@@ -31,6 +31,7 @@ pub struct FileReport {
     pub format: String,
     pub date_format: String,
     pub with_timeline: bool,
+    pub timeline_keep_no_date: bool,
     pub include_empty: bool,
     pub file_name: String,
     pub num_lines: usize,
@@ -231,6 +232,7 @@ impl Output {
         metadata.data_type = data_type_conf.data_type.clone();
         //series of flag that defines what needs to be computed
         let mut compute_timeline = false;
+        let mut timeline_keep_no_date = false;
         let mut compute_hash = false;
         let mut outputs = Vec::new();
 
@@ -259,7 +261,8 @@ impl Output {
             }
 
             if output_conf.with_timeline {
-                compute_timeline = true
+                compute_timeline = true;
+                timeline_keep_no_date |= output_conf.timeline_keep_no_date;
             }
             //create output folder
             let output_folder = &output_conf.output_folder;
@@ -275,6 +278,8 @@ impl Output {
                 format: output_conf.format.clone(),
                 date_format: output_conf.date_format.clone(),
                 with_timeline: output_conf.with_timeline,
+                timeline_keep_no_date: output_conf.with_timeline
+                    && output_conf.timeline_keep_no_date,
                 include_empty: output_conf.include_empty,
                 ..Default::default()
             };
@@ -352,7 +357,7 @@ impl Output {
             false => None,
         };
 
-        let line_builder = LineBuilder::new(
+        let mut line_builder = LineBuilder::new(
             metadata,
             timeline_builder,
             field_mapping,
@@ -360,6 +365,7 @@ impl Output {
             data_type_conf.has_primary_key,
             run_config.force_snake_case,
         );
+        line_builder.timeline_keep_no_date = timeline_keep_no_date;
 
         //write metadata for normalized output
         for writer in &mut outputs {
@@ -692,6 +698,67 @@ mod tests {
         assert_eq!(timeline["metadata_id"], metadata_id);
 
         drop(output);
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn timeline_keep_no_date_is_applied_per_output() {
+        let output_folder = test_output_folder("output_timeline_no_date");
+        let mut plugin_config = mapped_plugin_config("events", event_field_mapping());
+        let mut timeline =
+            TimeLineBuilder::new(TimeLineType::Standard, "events".to_owned(), 0, None, None);
+        timeline.add_description_ouput_path(vec!["event".to_owned()]);
+        plugin_config.data_type_configs[0].timeline = Some(timeline);
+
+        let mut discard = json_output_config("discard_no_date", &output_folder, HashMap::new());
+        discard.with_timeline = true;
+
+        let mut keep = json_output_config("keep_no_date", &output_folder, HashMap::new());
+        keep.with_timeline = true;
+        keep.timeline_keep_no_date = true;
+
+        let mut inactive =
+            json_output_config("inactive_no_timeline", &output_folder, HashMap::new());
+        inactive.timeline_keep_no_date = true;
+
+        let mut output = Output::new(
+            RunConfiguration::new(vec![discard, keep, inactive], true, None),
+            plugin_config,
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("invalid event".to_owned()));
+
+        output.write(&mut record).unwrap();
+        output.finalize().unwrap();
+        drop(output);
+
+        let discarded =
+            fs::read_to_string(output_folder.join("discard_no_date.events.jsonl")).unwrap();
+        assert!(discarded.is_empty());
+
+        let placeholder: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("keep_no_date.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        assert!(placeholder["timestamp"].is_null());
+        assert_eq!(placeholder["timestamp_meaning"], "empty placeholder");
+        assert_eq!(placeholder["description"], "event: invalid event");
+        assert_eq!(placeholder["data"]["event"], "invalid event");
+
+        let inactive: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("inactive_no_timeline.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        assert_eq!(inactive["event"], "invalid event");
+        assert!(inactive.get("timestamp").is_none());
+
         remove_dir_if_exists(&output_folder);
     }
 

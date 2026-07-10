@@ -221,6 +221,9 @@ impl JsonFormatter {
         if self.include_timeline {
             let metadata = self.serialized_metadata(&line_builder.metadata);
             for timeline in &data.timeline {
+                if timeline.timestamp.is_none() && !self.file_report.timeline_keep_no_date {
+                    continue;
+                }
                 self.line_buffer.clear();
                 timeline.json_serialise_with_context(
                     &mut self.line_buffer,
@@ -276,6 +279,9 @@ impl JsonFormatter {
             && let Some(timeline_writer) = &mut self.timeline_writer
         {
             for timeline in &data.timeline {
+                if timeline.timestamp.is_none() && !self.file_report.timeline_keep_no_date {
+                    continue;
+                }
                 self.line_buffer.clear();
                 timeline.json_serialise_with_context(
                     &mut self.line_buffer,

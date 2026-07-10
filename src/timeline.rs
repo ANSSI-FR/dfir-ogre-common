@@ -22,6 +22,7 @@ use crate::{
 };
 
 const MACB_FILLER: &str = "MACBMACB";
+pub(crate) const EMPTY_TIMESTAMP_MEANING: &str = "empty placeholder";
 
 /// Holds the MACB lookup table for timestamp metadata.
 static MACB_TABLE: LazyLock<HashMap<String, u8>> = LazyLock::new(|| {
@@ -40,7 +41,7 @@ static MACB_TABLE: LazyLock<HashMap<String, u8>> = LazyLock::new(|| {
 pub struct TimeLine {
     pub computer: Option<String>,
     pub id: Option<String>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Option<DateTime<Utc>>,
     pub timestamp_meaning: String,
     pub data_type: String,
     pub related_user: String,
@@ -90,7 +91,12 @@ impl TimeLine {
             let mut object = JsonObjectWriter::new(buffer);
             object.optional_string_field("id", self.id.as_deref());
             object.optional_string_field("computer", self.computer.as_deref());
-            object.string_field("timestamp", &serialize_date(&self.timestamp, date_codec));
+            match self.timestamp.as_ref() {
+                Some(timestamp) => {
+                    object.string_field("timestamp", &serialize_date(timestamp, date_codec));
+                }
+                None => object.field_raw("timestamp", |buffer| buffer.push_str("null")),
+            }
             object.string_field("timestamp_meaning", &self.timestamp_meaning);
             object.string_field("data_type", &self.data_type);
             object.string_field("related_user", &self.related_user);
@@ -120,7 +126,10 @@ impl TimeLine {
         hash_util::write_field(hasher, "computer");
         hash_util::write_option_str(hasher, self.computer.as_deref());
         hash_util::write_field(hasher, "timestamp");
-        hash_util::write_date(hasher, &self.timestamp);
+        match self.timestamp.as_ref() {
+            Some(timestamp) => hash_util::write_date(hasher, timestamp),
+            None => hash_util::write_str(hasher, "null timestamp"),
+        }
         hash_util::write_field(hasher, "timestamp_meaning");
         hash_util::write_str(hasher, &self.timestamp_meaning);
         hash_util::write_field(hasher, "data_type");
@@ -166,7 +175,10 @@ impl TimeLine {
                 row.quoted_field(self.id.as_deref().unwrap_or_default());
             }
             row.quoted_field(self.computer.as_deref().unwrap_or_default());
-            row.raw_field(&serialize_date(&self.timestamp, date_codec));
+            match self.timestamp.as_ref() {
+                Some(timestamp) => row.raw_field(&serialize_date(timestamp, date_codec)),
+                None => row.empty_field(),
+            }
             row.quoted_field(&self.timestamp_meaning);
             row.quoted_field(&self.data_type);
             row.quoted_field(&self.related_user);
@@ -856,10 +868,29 @@ impl TimeLineBuilder {
     }
 
     pub fn to_timelines(&mut self, timeline_records: &mut Vec<TimeLine>) -> Result<(), Error> {
+        self.build_timelines_with_no_date(timeline_records, false)
+    }
+
+    pub(crate) fn build_timelines_with_no_date(
+        &mut self,
+        timeline_records: &mut Vec<TimeLine>,
+        keep_no_date: bool,
+    ) -> Result<(), Error> {
         let related_user = self.format_related_user()?;
         let description = self.format_description()?;
         let additional_description = self.format_additional_description()?;
         let mut timeline_data = self.timeline_data.0.lock().expect("mutex lock panicked");
+        if timeline_data.timestamps.is_empty() && keep_no_date {
+            timeline_records.push(TimeLine {
+                timestamp: None,
+                timestamp_meaning: EMPTY_TIMESTAMP_MEANING.to_owned(),
+                data_type: self.data_type.clone(),
+                related_user: related_user.clone(),
+                description: description.clone(),
+                additional_description: additional_description.clone(),
+                ..Default::default()
+            });
+        }
         for (timestamp, meaning) in timeline_data.timestamps.drain() {
             let timestamp_meaning = meaning.format_meaning();
             let data_type = self.data_type.clone();
@@ -868,7 +899,7 @@ impl TimeLineBuilder {
             let additional_description = additional_description.clone();
 
             timeline_records.push(TimeLine {
-                timestamp,
+                timestamp: Some(timestamp),
                 timestamp_meaning,
                 data_type,
                 related_user,
@@ -893,6 +924,56 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    #[test]
+    fn timeline_without_date_only_emits_placeholder_when_enabled() {
+        fn builder_with_description() -> TimeLineBuilder {
+            let builder =
+                TimeLineBuilder::new(TimeLineType::Standard, "events".to_owned(), 0, None, None);
+            builder.add_field_value(
+                &vec![TimelineFieldType::DescriptionField],
+                "event",
+                &Value::String("invalid event".to_owned()),
+            );
+            builder
+        }
+
+        let mut discarded = Vec::new();
+        builder_with_description()
+            .build_timelines_with_no_date(&mut discarded, false)
+            .unwrap();
+        assert!(discarded.is_empty());
+
+        let mut kept = Vec::new();
+        builder_with_description()
+            .build_timelines_with_no_date(&mut kept, true)
+            .unwrap();
+
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].timestamp, None);
+        assert_eq!(kept[0].timestamp_meaning, EMPTY_TIMESTAMP_MEANING);
+        assert_eq!(kept[0].data_type, "events");
+        assert_eq!(kept[0].description, "event: invalid event");
+
+        let mut json = String::new();
+        kept[0]
+            .json_serialise(&mut json, &DateOutputCodec::IsoUtc(), true)
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(json["timestamp"].is_null());
+
+        let mut csv = String::new();
+        kept[0]
+            .csv_serialise(&mut csv, &DateOutputCodec::IsoUtc(), true, false)
+            .unwrap();
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(csv.as_bytes());
+        let record = reader.records().next().unwrap().unwrap();
+        assert_eq!(&record[1], "");
+        assert_eq!(&record[2], EMPTY_TIMESTAMP_MEANING);
+    }
 
     /// Verify that two timestamps from separate fields are merged correctly, and that user, description and additional description fields appear as expected. Also checks the MACB meaning string.
     #[test]
@@ -1260,8 +1341,10 @@ mod tests {
     fn timeline_struct_serialisation() {
         let mut tl = TimeLine {
             computer: Some("COMP1".to_owned()),
-            timestamp: crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso())
-                .unwrap(),
+            timestamp: Some(
+                crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso())
+                    .unwrap(),
+            ),
             timestamp_meaning: "Created".to_owned(),
             data_type: "evtx".to_owned(),
             related_user: "user".to_owned(),
@@ -1355,8 +1438,10 @@ mod tests {
     fn timeline_for_serialization_tests() -> TimeLine {
         TimeLine {
             computer: Some("COMP;\"1\"\nnext".to_owned()),
-            timestamp: crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso())
-                .unwrap(),
+            timestamp: Some(
+                crate::date_util::parse_date("2020-01-01T00:00:00Z", &DateInputCodec::Iso())
+                    .unwrap(),
+            ),
             timestamp_meaning: "Created".to_owned(),
             data_type: "evtx".to_owned(),
             related_user: "user".to_owned(),

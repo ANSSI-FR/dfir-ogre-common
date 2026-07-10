@@ -369,6 +369,7 @@ class FileReport:
     format: str
     date_format: str
     with_timeline: bool
+    timeline_keep_no_date: bool
     include_empty: bool
     file_name: str
     num_lines: int
@@ -574,6 +575,7 @@ class OutputConfiguration:
     format: str
     date_format: str
     with_timeline: bool
+    timeline_keep_no_date: bool
     include_empty: bool
     output_folder: str
     base_file_name: str
@@ -589,6 +591,7 @@ class OutputConfiguration:
         with_timeline: bool = False,
         include_empty: bool = True,
         params: Dict[str, str] = {},
+        timeline_keep_no_date: bool = False,
     ) -> None:
         """Create a new ``OutputConfiguration``.
         Args:
@@ -598,6 +601,7 @@ class OutputConfiguration:
             format: Primary serialization format, e.g. ``"json"`` or ``"csv"``. Defaults to ``"jsonl"``.
             date_format: Pattern used for serialising timestamps, e.g. ``"iso_utc"``. Defaults to ``"iso_utc"``.
             with_timeline: Include timeline information when ``True``. Defaults to ``False``.
+            timeline_keep_no_date: Emit a placeholder timeline entry with a null timestamp when no valid date was extracted. Only active when ``with_timeline`` is ``True``. Defaults to ``False``.
             include_empty: Emit empty fields when ``True``. Defaults to ``True``.
             params: Free-form key/value pairs for extra options. Defaults to ``{}``.
         """

@@ -52,6 +52,8 @@ pub struct OutputConfiguration {
     #[pyo3(get)]
     pub with_timeline: bool,
     #[pyo3(get)]
+    pub timeline_keep_no_date: bool,
+    #[pyo3(get)]
     pub include_empty: bool,
     #[pyo3(get, set)]
     pub output_folder: String,
@@ -60,7 +62,6 @@ pub struct OutputConfiguration {
     #[pyo3(get)]
     pub params: HashMap<String, String>,
 }
-#[pymethods]
 impl OutputConfiguration {
     /// Creates a new `OutputConfiguration`.
     ///
@@ -72,9 +73,7 @@ impl OutputConfiguration {
     /// * `output_folder` – directory where files are written.
     /// * `base_file_name` – base name for created files.
     /// * `params` – free‑form key/value pairs for extra options.
-    #[new]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = ( base_file_name, output_folder, output_type="file".into(), format="jsonl".into(), date_format="iso_utc".into(), with_timeline=false,include_empty=true, params=HashMap::new()))]
     pub fn new(
         base_file_name: String,
         output_folder: String,
@@ -90,6 +89,41 @@ impl OutputConfiguration {
             format,
             date_format,
             with_timeline,
+            timeline_keep_no_date: false,
+            include_empty,
+            output_folder,
+            base_file_name,
+            params,
+        }
+    }
+}
+
+#[pymethods]
+impl OutputConfiguration {
+    #[new]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (base_file_name, output_folder, output_type="file".into(), format="jsonl".into(), date_format="iso_utc".into(), with_timeline=false, include_empty=true, params=HashMap::new(), timeline_keep_no_date=false))]
+    /// Python constructor for an output configuration.
+    ///
+    /// `timeline_keep_no_date` emits a null-timestamp placeholder when timeline extraction finds
+    /// no valid date. It is ignored unless `with_timeline` is enabled.
+    fn py_new(
+        base_file_name: String,
+        output_folder: String,
+        output_type: String,
+        format: String,
+        date_format: String,
+        with_timeline: bool,
+        include_empty: bool,
+        params: HashMap<String, String>,
+        timeline_keep_no_date: bool,
+    ) -> Self {
+        Self {
+            output_type,
+            format,
+            date_format,
+            with_timeline,
+            timeline_keep_no_date,
             include_empty,
             output_folder,
             base_file_name,
@@ -227,8 +261,27 @@ mod tests {
         assert_eq!(config.format, "normalized_jsonl");
         assert_eq!(config.date_format, "iso");
         assert!(config.with_timeline);
+        assert!(!config.timeline_keep_no_date);
         assert!(!config.include_empty);
         assert_eq!(config.params, params);
+    }
+
+    #[test]
+    fn output_configuration_python_constructor_accepts_timeline_keep_no_date() {
+        let config = OutputConfiguration::py_new(
+            "events".to_string(),
+            "/tmp/output".to_string(),
+            "file".to_string(),
+            "jsonl".to_string(),
+            "iso".to_string(),
+            true,
+            true,
+            HashMap::new(),
+            true,
+        );
+
+        assert!(config.with_timeline);
+        assert!(config.timeline_keep_no_date);
     }
 
     #[test]
