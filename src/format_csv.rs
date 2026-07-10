@@ -6,7 +6,7 @@ use crate::{
     line_builder::{LineBuilder, OUPUT_DATA_ID, OUTPUT_METADATA_FIELD, OUTPUT_METADATA_ID_FIELD},
     metadata::MetadataSerialized,
     output::OutputType,
-    output_writer::{FileWriter, GzipWriter, Writer},
+    output_writer::{FileWriter, GzipWriter, Writer, try_close_all},
     serialise::CsvRowWriter,
     timeline::{TimeLine, TimelineSerializationContext},
 };
@@ -310,14 +310,12 @@ impl CsvFormatter {
     /// * `Err(Error)` if an I/O error occurs during the closing process (e.g., disk error).
     ///
     pub fn close(&mut self) -> Result<(), Error> {
-        self.data_writer.close()?;
-        if let Some(writer) = &mut self.metadata_writer {
-            writer.close()?
-        }
-        if let Some(writer) = &mut self.timeline_writer {
-            writer.close()?
-        }
-        Ok(())
+        let writers = [
+            Some(self.data_writer.as_mut()),
+            self.metadata_writer.as_deref_mut(),
+            self.timeline_writer.as_deref_mut(),
+        ];
+        try_close_all(writers.into_iter().flatten(), |writer| writer.close())
     }
 }
 

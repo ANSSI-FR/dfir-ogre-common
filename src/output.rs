@@ -8,6 +8,7 @@ use crate::line_builder::LineBuilder;
 use crate::config_parser::RunConfiguration;
 use crate::format_csv::CsvFormatter;
 use crate::format_json::JsonFormatter;
+use crate::output_writer::try_close_all;
 use crate::{FieldMapping, Metadata, Record};
 
 use pyo3::prelude::*;
@@ -211,10 +212,7 @@ impl Output {
     }
 
     pub(crate) fn finalize(&mut self) -> Result<(), Error> {
-        for out in &mut self.outputs {
-            out.close()?;
-        }
-        Ok(())
+        try_close_all(&mut self.outputs, OutputWriter::close)
     }
 }
 

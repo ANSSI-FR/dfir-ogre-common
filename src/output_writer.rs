@@ -32,6 +32,28 @@ pub trait Writer {
     fn close(&mut self) -> Result<(), Error>;
 }
 
+/// Attempt to close every item, even after one close fails.
+///
+/// The first error is returned after all close operations have been attempted.
+pub(crate) fn try_close_all<'a, T: ?Sized + 'a>(
+    items: impl IntoIterator<Item = &'a mut T>,
+    mut close: impl FnMut(&mut T) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let mut first_error = None;
+    for item in items {
+        if let Err(error) = close(item)
+            && first_error.is_none()
+        {
+            first_error = Some(error);
+        }
+    }
+
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 /// A concrete implementation of the `Writer` trait that writes data to a file.
 /// Uses a buffered writer to improve performance.
 pub struct FileWriter {
@@ -137,5 +159,45 @@ mod tests {
 
         assert_eq!(decoded, "compressed payload");
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn try_close_all_attempts_every_item_and_returns_first_error() {
+        struct CloseTarget {
+            name: &'static str,
+            should_fail: bool,
+            attempted: bool,
+        }
+
+        let mut targets = [
+            CloseTarget {
+                name: "first",
+                should_fail: true,
+                attempted: false,
+            },
+            CloseTarget {
+                name: "second",
+                should_fail: false,
+                attempted: false,
+            },
+            CloseTarget {
+                name: "third",
+                should_fail: true,
+                attempted: false,
+            },
+        ];
+
+        let error = try_close_all(&mut targets, |target| {
+            target.attempted = true;
+            if target.should_fail {
+                Err(Error::PluginError(target.name.to_owned()))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, Error::PluginError(message) if message == "first"));
+        assert!(targets.iter().all(|target| target.attempted));
     }
 }
