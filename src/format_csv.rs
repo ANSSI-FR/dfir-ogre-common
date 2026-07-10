@@ -358,6 +358,14 @@ mod tests {
         }
     }
 
+    fn remove_dir_if_exists(path: &Path) {
+        match fs::remove_dir_all(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("failed to remove {}: {error}", path.display()),
+        }
+    }
+
     fn timeline_field_mapping_for_two_dates() -> FieldMapping {
         FieldMapping::new(
             vec![
@@ -649,14 +657,12 @@ mod tests {
 
     #[test]
     fn normalized_csv_timeline_uses_formatter_metadata_id() {
-        std::fs::create_dir_all(TMP_FOLDER).unwrap();
+        let output_folder = Path::new(TMP_FOLDER).join("test_csv_timeline_md_id_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+        let output_folder_str = output_folder.to_str().unwrap();
         let base_file_name = "test_csv_timeline_md_id";
-        let data_path = Path::new(TMP_FOLDER).join(format!("{base_file_name}.csv"));
-        let metadata_path = Path::new(TMP_FOLDER).join("ogre_metadata.csv");
-        let timeline_path = Path::new(TMP_FOLDER).join(format!("{base_file_name}.tl.csv"));
-        remove_if_exists(&data_path);
-        remove_if_exists(&metadata_path);
-        remove_if_exists(&timeline_path);
+        let timeline_path = output_folder.join(format!("{base_file_name}.tl.csv"));
 
         let timeline_builder = TimeLineBuilder::new(
             crate::TimeLineType::Standard,
@@ -677,7 +683,7 @@ mod tests {
         let mut output = CsvFormatter::new(
             Some(field_mapping),
             OutputType::File,
-            TMP_FOLDER,
+            output_folder_str,
             base_file_name,
             DateOutputCodec::Iso(),
             false,
@@ -712,14 +718,15 @@ mod tests {
         let first = reader.records().next().unwrap().unwrap();
         assert_eq!(&first[8], &line_builder.metadata_id);
 
-        remove_if_exists(&data_path);
-        remove_if_exists(&metadata_path);
-        remove_if_exists(&timeline_path);
+        remove_dir_if_exists(&output_folder);
     }
 
     #[test]
     fn normalized_output() {
-        std::fs::create_dir_all(TMP_FOLDER).unwrap();
+        let output_folder = Path::new(TMP_FOLDER).join("test_normalized_csv_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+        let output_folder_str = output_folder.to_str().unwrap();
         let timeline_builder = TimeLineBuilder::new(
             crate::TimeLineType::Standard,
             "test_data".to_string(),
@@ -763,7 +770,7 @@ mod tests {
         let mut ouput = CsvFormatter::new(
             Some(field_mapping),
             OutputType::File,
-            TMP_FOLDER,
+            output_folder_str,
             base_file_name,
             DateOutputCodec::Iso(),
             false,
@@ -788,16 +795,11 @@ mod tests {
         assert_eq!(ouput.file_report.num_lines, 1);
         ouput.close().unwrap();
 
-        let path = Path::new(TMP_FOLDER).join("ogre_metadata.csv");
-        fs::remove_file(path).unwrap();
+        let data_path = output_folder.join(format!("{base_file_name}.csv"));
+        let data = fs::read_to_string(data_path).unwrap();
 
-        let path = Path::new(TMP_FOLDER).join(format!("{base_file_name}.csv"));
-        let data: String = fs::read_to_string(&path).unwrap();
-        fs::remove_file(path).unwrap();
-
-        let path = Path::new(TMP_FOLDER).join(format!("{base_file_name}.tl.csv"));
-        let timeline: String = fs::read_to_string(&path).unwrap();
-        fs::remove_file(path).unwrap();
+        let timeline_path = output_folder.join(format!("{base_file_name}.tl.csv"));
+        let timeline = fs::read_to_string(timeline_path).unwrap();
 
         let mut reader = csv::ReaderBuilder::new()
             .has_headers(true)
@@ -848,5 +850,7 @@ mod tests {
         assert_eq!(1, line_number);
         assert_eq!(tl_ogre_id, ogre_id);
         assert_eq!(tl_ogre_md_id, ogre_md_id);
+
+        remove_dir_if_exists(&output_folder);
     }
 }
