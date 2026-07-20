@@ -261,7 +261,13 @@ Regular CSV will use this exact schema order before its metadata column:
 path;mtime;security_descriptor;name;data;type;size;is_placeholder;invalid_signature;error;ogre_md
 ```
 
-Normalized CSV will use the same data columns followed by its normalized metadata identifier. Tests will assert that every header and row has the same number of columns and that placeholder cells remain aligned.
+Normalized CSV will use the same mapped data columns followed by the framework-generated `ogre_id` data identifier and `ogre_md_id` metadata identifier:
+
+```text
+path;mtime;security_descriptor;name;data;type;size;is_placeholder;invalid_signature;error;ogre_id;ogre_md_id
+```
+
+Tests will assert that every header and row has the same number of columns and that placeholder cells remain aligned.
 
 ### Key parser compatibility
 
