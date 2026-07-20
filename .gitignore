@@ -73,6 +73,7 @@ docs/_build/
 .github/
 .tmp/
 .tmp/*
+.worktrees/
 
 
 #leveldb
