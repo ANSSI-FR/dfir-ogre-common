@@ -54,13 +54,24 @@ impl CsvExtraField<'_> {
 
 fn csv_serialise_record_with_extra_field(
     record: &Record,
+    record_fields: Option<&[String]>,
     extra_value: CsvExtraField<'_>,
     buffer: &mut String,
     date_codec: &DateOutputCodec,
 ) -> Result<(), Error> {
     let mut row = CsvRowWriter::new(buffer);
-    for (_, value) in record.iter() {
-        row.try_raw_field(|buffer| Value::csv_serialise_value(value, buffer, date_codec))?;
+    if let Some(record_fields) = record_fields {
+        for field in record_fields {
+            if let Some(value) = record.get(field) {
+                row.try_raw_field(|buffer| Value::csv_serialise_value(value, buffer, date_codec))?;
+            } else {
+                row.empty_field();
+            }
+        }
+    } else {
+        for (_, value) in record.iter() {
+            row.try_raw_field(|buffer| Value::csv_serialise_value(value, buffer, date_codec))?;
+        }
     }
     extra_value.write_to_row(&mut row);
     Ok(())
@@ -81,6 +92,7 @@ pub struct CsvFormatter {
     timeline_writer: Option<Box<dyn Writer + Send + Sync>>,
     metadata_serialized: Option<MetadataSerialized>,
     line_buffer: String,
+    record_fields: Option<Vec<String>>,
     output_date_codec: DateOutputCodec,
     include_empty: bool,
     pub file_report: FileReport,
@@ -109,16 +121,26 @@ impl CsvFormatter {
         let report_template = file_report.clone();
         file_report.file_name = file_path.display().to_string();
 
-        let header = if let Some(mapping) = field_mapping {
+        let (header, record_fields) = if let Some(mapping) = field_mapping {
+            let mut record_fields = mapping
+                .field_parser_tree
+                .output_fields
+                .iter()
+                .map(|field| field.output_name().to_owned())
+                .collect::<Vec<_>>();
+            if normalized {
+                record_fields.push(OUPUT_DATA_ID.to_owned());
+            }
+
             let mut header = String::new();
             if include_timeline && !normalized {
                 TimeLine::csv_serialise_header(&mut header, normalized)
             } else {
-                build_standard_header(&mut header, normalized, mapping)?;
+                build_standard_header(&mut header, normalized, &record_fields)?;
             }
-            Some(header)
+            (Some(header), Some(record_fields))
         } else {
-            None
+            (None, None)
         };
         let data_writer = open_writer(&file_path, &output_type, compression_level, header)?;
 
@@ -172,6 +194,7 @@ impl CsvFormatter {
             timeline_writer,
             metadata_serialized: None,
             line_buffer: String::new(),
+            record_fields,
             output_date_codec,
             include_empty,
             file_report,
@@ -224,6 +247,7 @@ impl CsvFormatter {
 
             csv_serialise_record_with_extra_field(
                 &data.data,
+                self.record_fields.as_deref(),
                 CsvExtraField::Metadata(&metadata),
                 &mut self.line_buffer,
                 &self.output_date_codec,
@@ -286,6 +310,7 @@ impl CsvFormatter {
         self.line_buffer.clear();
         csv_serialise_record_with_extra_field(
             &data.data,
+            self.record_fields.as_deref(),
             CsvExtraField::String(&line_builder.metadata_id),
             &mut self.line_buffer,
             &self.output_date_codec,
@@ -328,15 +353,13 @@ impl CsvFormatter {
 fn build_standard_header(
     header: &mut String,
     normalized: bool,
-    mapping: FieldMapping,
+    record_fields: &[String],
 ) -> Result<(), Error> {
-    for fields in mapping.field_parser_tree.output_fields {
-        header.push_str(fields.output_name());
+    for field in record_fields {
+        header.push_str(field);
         header.push(CSV_DELIMITER);
     }
     if normalized {
-        header.push_str(OUPUT_DATA_ID);
-        header.push(CSV_DELIMITER);
         header.push_str(OUTPUT_METADATA_ID_FIELD);
     } else {
         header.push_str(OUTPUT_METADATA_FIELD);
@@ -455,6 +478,87 @@ mod tests {
         fs::remove_file(path).unwrap();
         let expected = "\"Hello\";\"World\";\"{\"\"computer\"\":\"\"test\"\",\"\"data_type\"\":\"\"\"\"}\"\n\"Hello\";4.2;\"{\"\"computer\"\":\"\"test\"\",\"\"data_type\"\":\"\"\"\"}\"\n";
         assert_eq!(expected, message)
+    }
+
+    #[test]
+    fn standard_csv_filters_only_top_level_unmapped_fields() {
+        let output_folder = Path::new(TMP_FOLDER).join("test_standard_csv_schema_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+
+        let field_mapping = FieldMapping::new(
+            vec![
+                Field::Object {
+                    name: FieldName::new("details".into(), false, None, None, None),
+                    fields: vec![Field::Single {
+                        name: FieldName::new("known".into(), false, None, None, None),
+                        parser: Parser::String(),
+                        default_value: None,
+                    }],
+                    ignore: false,
+                },
+                Field::Single {
+                    name: FieldName::new("missing".into(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+            ],
+            None,
+        );
+        let mut line_builder = LineBuilder::new(
+            Metadata::new("schema-host".into()),
+            None,
+            field_mapping.clone(),
+            false,
+            false,
+            true,
+        );
+        let mut output = CsvFormatter::new(
+            Some(field_mapping),
+            OutputType::File,
+            output_folder.to_str().unwrap(),
+            "schema",
+            DateOutputCodec::Iso(),
+            false,
+            false,
+            7,
+            FileReport::default(),
+            false,
+        )
+        .unwrap();
+
+        let mut details = Record::new();
+        details.add("known", Value::String("kept".to_owned()));
+        details.add("unmapped_nested", Value::String("also kept".to_owned()));
+        let mut record = Record::new();
+        record.add("details", Value::Object(details));
+        record.add("unmapped_top_level", Value::String("filtered".to_owned()));
+
+        line_builder.build(&mut record).unwrap();
+        output.write(&line_builder).unwrap();
+        output.close().unwrap();
+
+        let data = fs::read_to_string(output_folder.join("schema.csv")).unwrap();
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(data.as_bytes());
+        let headers = reader.headers().unwrap().clone();
+        assert_eq!(
+            headers.iter().collect::<Vec<_>>(),
+            vec!["details", "missing", "ogre_md"]
+        );
+
+        let row = reader.records().next().unwrap().unwrap();
+        assert_eq!(row.len(), headers.len());
+        let details: serde_json::Value = serde_json::from_str(&row[0]).unwrap();
+        assert_eq!(details["known"], "kept");
+        assert_eq!(details["unmapped_nested"], "also kept");
+        assert_eq!(&row[1], "");
+        let metadata: serde_json::Value = serde_json::from_str(&row[2]).unwrap();
+        assert_eq!(metadata["computer"], "schema-host");
+        assert!(!row.iter().any(|value| value == "filtered"));
+
+        remove_dir_if_exists(&output_folder);
     }
 
     /// Tests writing to a gzipped file.
@@ -584,6 +688,7 @@ mod tests {
 
         csv_serialise_record_with_extra_field(
             &record,
+            None,
             CsvExtraField::Metadata(&metadata),
             &mut buffer,
             &DateOutputCodec::Iso(),

@@ -548,6 +548,7 @@ mod tests {
         .unwrap();
         let mut record = Record::new();
         record.add("event", Value::String("login".to_owned()));
+        record.add("unmapped_top_level", Value::String("json-only".to_owned()));
 
         output.write(&mut record).unwrap();
         for writer in &mut output.outputs {
@@ -594,6 +595,7 @@ mod tests {
         let json_data: serde_json::Value =
             serde_json::from_str(fs::read_to_string(&json_data_path).unwrap().trim()).unwrap();
         assert_eq!(json_data["event"], "login");
+        assert_eq!(json_data["unmapped_top_level"], "json-only");
         assert!(json_data["ogre_md_id"].as_str().unwrap().len() > 10);
 
         let json_metadata_path = output_folder.join("ogre_metadata.jsonl");
@@ -612,9 +614,11 @@ mod tests {
         assert_eq!(&headers[1], "ogre_id");
         assert_eq!(&headers[2], "ogre_md_id");
         let csv_record = csv_reader.records().next().unwrap().unwrap();
+        assert_eq!(csv_record.len(), headers.len());
         assert_eq!(&csv_record[0], "login");
         assert!(csv_record[1].len() > 10);
         assert!(csv_record[2].len() > 10);
+        assert!(!csv_record.iter().any(|value| value == "json-only"));
 
         let csv_metadata_path = output_folder.join("ogre_metadata.csv");
         let metadata_csv = fs::read_to_string(&csv_metadata_path).unwrap();
