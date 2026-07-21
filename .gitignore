@@ -8,6 +8,10 @@ __pycache__/
 # C extensions
 *.so
 
+# sqlite logs
+*.db-shm
+*.db-wal
+
 # Distribution / packaging
 .Python
 .venv/
