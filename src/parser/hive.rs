@@ -689,7 +689,7 @@ mod tests {
 
         let run_config = RunConfiguration::new(vec![output_conf], true, None);
 
-        let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+        let xml = fs::read_to_string("test_data/hive/hive_keys.xml").unwrap();
         let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
 
         let report = parse_hive_keys(
@@ -739,7 +739,7 @@ mod tests {
 
         let run_config = RunConfiguration::new(vec![output_conf], true, None);
 
-        let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+        let xml = fs::read_to_string("test_data/hive/hive_keys.xml").unwrap();
         let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
 
         let report = parse_hive_keys(
@@ -812,7 +812,7 @@ mod tests {
 
         let run_config = RunConfiguration::new(vec![output_conf], true, None);
 
-        let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+        let xml = fs::read_to_string("test_data/hive/hive_keys.xml").unwrap();
         let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
 
         let report = parse_hive_keys(
@@ -866,7 +866,7 @@ mod tests {
 
         let run_config = RunConfiguration::new(vec![output_conf], true, None);
 
-        let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+        let xml = fs::read_to_string("test_data/hive/hive_keys.xml").unwrap();
         let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
 
         let report = parse_hive_keys(
@@ -909,7 +909,7 @@ mod tests {
 
         let run_config = RunConfiguration::new(vec![output_conf], true, None);
 
-        let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+        let xml = fs::read_to_string("test_data/hive/hive_keys.xml").unwrap();
         let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
 
         let report = parse_hive_keys(
@@ -1126,7 +1126,7 @@ mod tests {
 
         let run_config = RunConfiguration::new(vec![output_conf], true, None);
 
-        let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+        let xml = fs::read_to_string("test_data/hive/hive_keys.xml").unwrap();
         let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
 
         let report = parse_hive_keys(
