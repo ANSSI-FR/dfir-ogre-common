@@ -298,6 +298,8 @@ const HIVE_VALUE_TYPE: &str = "type";
 const HIVE_VALUE_SIZE: &str = "size";
 const HIVE_VALUE_ERROR: &str = "error";
 const HIVE_VALUE_INVALID_SIGNATURE: &str = "invalid_signature";
+const HIVE_VALUE_SECURITY_DESCRIPTOR: &str = "security_descriptor";
+const HIVE_VALUE_IS_PLACEHOLDER: &str = "is_placeholder";
 
 /// Extract Keys from a Windows Hive file
 ///
@@ -377,6 +379,57 @@ fn parse_values(
     Ok(report)
 }
 
+fn build_value_base_record<B>(
+    key_node: &KeyNode<'_, B>,
+    path: &str,
+    report: &mut RunReport,
+) -> Record
+where
+    B: SplitByteSlice,
+{
+    let mut record = Record::with_capacity(3);
+    record.add(HIVE_VALUE_PATH, Value::String(path.to_owned()));
+
+    match from_filetime(key_node.timestamp()) {
+        Ok(mtime) => record.add(HIVE_KEY_DATE, Value::Date(mtime)),
+        Err(error) => {
+            report.add_error(format!("while parsing mtime for '{path}', error: {error}"));
+            record.add(HIVE_KEY_DATE, Value::Null());
+        }
+    }
+
+    match key_node.security_descriptor() {
+        Ok(bytes) => match security_descriptor_from_bytes(&bytes) {
+            Ok(descriptor) => record.add(
+                HIVE_VALUE_SECURITY_DESCRIPTOR,
+                Value::Object(descriptor.to_record()),
+            ),
+            Err(error) => {
+                report.add_error(format!(
+                    "while parsing security descriptor for '{path}', error: {error}"
+                ));
+                record.add(HIVE_VALUE_SECURITY_DESCRIPTOR, Value::Null());
+            }
+        },
+        Err(error) => {
+            report.add_error(format!(
+                "while reading security descriptor for '{path}', error: {error}"
+            ));
+            record.add(HIVE_VALUE_SECURITY_DESCRIPTOR, Value::Null());
+        }
+    }
+
+    record
+}
+
+fn add_placeholder_value(record: &mut Record) {
+    record.add(HIVE_VALUE_NAME, Value::String("Default".to_owned()));
+    record.add(HIVE_VALUE_DATA, Value::String(String::new()));
+    record.add(HIVE_VALUE_TYPE, Value::String("REG_NONE".to_owned()));
+    record.add(HIVE_VALUE_SIZE, Value::Int(0));
+    record.add(HIVE_VALUE_IS_PLACEHOLDER, Value::Bool(true));
+}
+
 /// Recursively processes a Hive key node and its subkeys, writing parsed values to the output.
 ///
 /// # Parameters
@@ -396,57 +449,94 @@ fn parse_subvalues<B>(
 where
     B: SplitByteSlice,
 {
-    if let Some(subkeys) = key_node.subkeys() {
-        let subkeys = match subkeys {
-            Ok(key) => key,
-            Err(e) => {
-                report.add_error(format!("while parsing sub_keys for '{path}' error: {e}"));
-                return Ok(());
+    let Some(subkeys) = key_node.subkeys() else {
+        return Ok(());
+    };
+
+    let subkeys = match subkeys {
+        Ok(subkeys) => subkeys,
+        Err(error) => {
+            report.add_error(format!(
+                "while parsing sub_keys for '{path}' error: {error}"
+            ));
+            return Ok(());
+        }
+    };
+
+    for key_node in subkeys {
+        let key_node = match key_node {
+            Ok(key_node) => key_node,
+            Err(error) => {
+                report.add_error(format!(
+                    "while parsing a sub_key under '{path}', error: {error}"
+                ));
+                continue;
             }
         };
 
-        for key_node in subkeys {
-            let key_node = key_node?;
-
-            let key_name = key_node.name()?.to_string_lossy();
-
-            let path = format!("{path}\\{key_name}");
-
-            if let Some(reg) = regex
-                && !reg.is_match(&path)
-            {
-                parse_subvalues(key_node, &path, output, regex, truncate_after, report)?;
+        let key_name = match key_node.name() {
+            Ok(name) => name.to_string_lossy(),
+            Err(error) => {
+                report.add_error(format!(
+                    "while parsing a sub_key name under '{path}', error: {error}"
+                ));
                 continue;
             }
+        };
 
-            let mut record = Record::new();
-            record.add(HIVE_VALUE_PATH, Value::String(path.clone()));
+        let path = format!("{path}\\{key_name}");
 
-            if let Some(value_iter) = key_node.values() {
-                let value_iter = value_iter?;
+        if let Some(reg) = regex
+            && !reg.is_match(&path)
+        {
+            parse_subvalues(key_node, &path, output, regex, truncate_after, report)?;
+            continue;
+        }
 
-                for value in value_iter {
-                    let mut value_record = record.clone();
+        let base_record = build_value_base_record(&key_node, &path, report);
+        let mut wrote_row = false;
 
-                    match parse_key_value(value, &mut value_record, truncate_after) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            report.add_error(format!(
-                                "while parsing values for '{path}', error: {e}"
-                            ));
-                            value_record.add(
-                                HIVE_VALUE_ERROR,
-                                Value::String(format!("Parsing error: {e}")),
-                            );
-                        }
-                    };
+        match key_node.values() {
+            Some(Ok(values)) => {
+                for value in values {
+                    let mut value_record = base_record.clone();
+                    value_record.add(HIVE_VALUE_IS_PLACEHOLDER, Value::Bool(false));
+
+                    if let Err(error) = parse_key_value(value, &mut value_record, truncate_after) {
+                        report.add_error(format!(
+                            "while parsing values for '{path}', error: {error}"
+                        ));
+                        value_record.add(
+                            HIVE_VALUE_ERROR,
+                            Value::String(format!("Parsing error: {error}")),
+                        );
+                    }
 
                     output.write(&mut value_record)?;
+                    wrote_row = true;
                 }
             }
-
-            parse_subvalues(key_node, &path, output, regex, truncate_after, report)?;
+            Some(Err(error)) => {
+                report.add_error(format!("while parsing values for '{path}', error: {error}"));
+                let mut placeholder = base_record.clone();
+                add_placeholder_value(&mut placeholder);
+                placeholder.add(
+                    HIVE_VALUE_ERROR,
+                    Value::String(format!("Parsing error: {error}")),
+                );
+                output.write(&mut placeholder)?;
+                wrote_row = true;
+            }
+            None => {}
         }
+
+        if !wrote_row {
+            let mut placeholder = base_record;
+            add_placeholder_value(&mut placeholder);
+            output.write(&mut placeholder)?;
+        }
+
+        parse_subvalues(key_node, &path, output, regex, truncate_after, report)?;
     }
 
     Ok(())
@@ -627,7 +717,11 @@ where
 #[cfg(test)]
 mod tests {
 
-    use std::{collections::HashMap, fs, path::Path};
+    use std::{
+        collections::{HashMap, HashSet},
+        fs,
+        path::Path,
+    };
 
     use crate::OutputConfiguration;
 
@@ -978,7 +1072,7 @@ mod tests {
 
         let result = &report.output_reports[0];
 
-        let expected_lines = 12;
+        let expected_lines = 537;
         assert_eq!(expected_lines, result.file_reports[0].num_lines);
 
         let jsonl = fs::read_to_string(targetfile).unwrap();
@@ -989,10 +1083,59 @@ mod tests {
 
         assert_eq!(expected_lines, lines.len());
 
-        let data = lines[4].as_object().unwrap();
+        let paths: HashSet<&str> = lines
+            .iter()
+            .map(|line| line["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(527, paths.len());
+        assert!(!paths.contains(""));
 
-        let parsed = data.get("data").unwrap().as_str().unwrap();
-        assert_eq!(parsed, "sz-test");
+        let real_rows = lines
+            .iter()
+            .filter(|line| line["is_placeholder"].as_bool() == Some(false))
+            .count();
+        let placeholder_rows = lines
+            .iter()
+            .filter(|line| line["is_placeholder"].as_bool() == Some(true))
+            .count();
+        assert_eq!(12, real_rows);
+        assert_eq!(525, placeholder_rows);
+
+        let real = lines
+            .iter()
+            .find(|line| line["path"] == "\\big-data-test" && line["name"] == "A")
+            .unwrap();
+        assert_eq!(real["is_placeholder"], false);
+        assert_eq!(real["type"], "REG_BINARY");
+        assert_eq!(real["size"], 16343);
+        assert!(real["data"].as_str().unwrap().ends_with("[..]"));
+        assert_eq!(real["mtime"], "2023-01-18T11:39:48.154060+00:00");
+        assert_eq!(real["security_descriptor"]["owner_sid"], "S-1-5-32-544");
+
+        let dword = lines
+            .iter()
+            .find(|line| line["path"] == "\\data-test" && line["name"] == "dword")
+            .unwrap();
+        assert_eq!(dword["data"], 42);
+
+        let multi_string = lines
+            .iter()
+            .find(|line| line["path"] == "\\data-test" && line["name"] == "reg-multi-sz")
+            .unwrap();
+        assert_eq!(multi_string["data"][0], "multi-sz-test");
+        assert_eq!(multi_string["data"][1], "line2");
+
+        let placeholder = lines
+            .iter()
+            .find(|line| line["path"] == "\\character-encoding-test")
+            .unwrap();
+        assert_eq!(placeholder["name"], "Default");
+        assert_eq!(placeholder["data"], "");
+        assert_eq!(placeholder["type"], "REG_NONE");
+        assert_eq!(placeholder["size"], 0);
+        assert_eq!(placeholder["is_placeholder"], true);
+        assert!(placeholder["mtime"].as_str().is_some());
+        assert!(placeholder["security_descriptor"].is_object());
     }
 
     #[test]
@@ -1044,6 +1187,14 @@ mod tests {
 
         assert_eq!(expected_lines, lines.len());
 
+        let genuine_default = lines
+            .iter()
+            .find(|line| line["path"] == "\\SAM\\Domains" && line["name"] == "Default")
+            .unwrap();
+        assert_eq!(genuine_default["is_placeholder"], false);
+        assert_eq!(genuine_default["type"], "REG_FIRST_INVALID");
+        assert_eq!(genuine_default["size"], 0);
+
         let data = lines[11].as_object().unwrap();
 
         let parsed = data.get("type").unwrap().as_str().unwrap();
@@ -1091,7 +1242,7 @@ mod tests {
 
         let result = &report.output_reports[0];
 
-        let expected_lines = 4484;
+        let expected_lines = 5685;
         assert_eq!(expected_lines, result.file_reports[0].num_lines);
 
         let jsonl = fs::read_to_string(targetfile).unwrap();
@@ -1101,6 +1252,19 @@ mod tests {
             .collect();
 
         assert_eq!(expected_lines, lines.len());
+
+        let malformed_path = "\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.data.controlcenter.uistate\\windows.data.controlcenter.uistate";
+        let malformed = lines
+            .iter()
+            .find(|line| line["path"] == malformed_path && line["name"] == "Data")
+            .unwrap();
+        assert_eq!(malformed["is_placeholder"], false);
+        assert_eq!(malformed["error"], "Parsing error: Invalid offset:'-4'");
+
+        assert!(lines.iter().any(|line| {
+            line["path"]
+                == "\\System\\GameConfigStore\\Parents\\f5ab3c1ab0f1af22669f461bd5b93334277d9878"
+        }));
     }
 
     #[test]
