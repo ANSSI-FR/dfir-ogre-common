@@ -554,6 +554,7 @@ where
     B: SplitByteSlice,
 {
     let value: KeyValue<'_, B> = value?;
+    record.add(HIVE_VALUE_SIZE, Value::Int(value.data_size() as i64));
 
     let mut value_name = value.name()?.to_string_lossy();
 
@@ -664,7 +665,6 @@ where
         }
     };
 
-    record.add(HIVE_VALUE_SIZE, Value::Int(value.data_size() as i64));
     if !value.validate_signature()? {
         record.add(HIVE_VALUE_INVALID_SIGNATURE, Value::Bool(true));
     }
@@ -1402,6 +1402,8 @@ mod tests {
             .find(|line| line["path"] == malformed_path && line["name"] == "Data")
             .unwrap();
         assert_eq!(malformed["is_placeholder"], false);
+        assert_eq!(malformed["type"], "REG_BINARY");
+        assert_eq!(malformed["size"], 5524);
         assert_eq!(malformed["error"], "Parsing error: Invalid offset:'-4'");
 
         assert!(lines.iter().any(|line| {

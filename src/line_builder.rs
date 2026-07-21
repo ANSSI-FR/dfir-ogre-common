@@ -460,22 +460,27 @@ impl LineBuilder {
                 None
             };
 
-            if let Value::Object(mut inner_data) = value {
-                let mut inner_insert = LineData::with_capacity(field_mapping.len(), false, false);
-                // Recursive processing
-                Self::build_record(
-                    &mut inner_data,
-                    &mut inner_insert,
-                    traversal.timeline_builder,
-                    inner_tl_fields,
-                    field_mapping,
-                    force_snake_case,
-                    false,
-                )?;
+            match value {
+                Value::Object(mut inner_data) => {
+                    let mut inner_insert =
+                        LineData::with_capacity(field_mapping.len(), false, false);
+                    // Recursive processing
+                    Self::build_record(
+                        &mut inner_data,
+                        &mut inner_insert,
+                        traversal.timeline_builder,
+                        inner_tl_fields,
+                        field_mapping,
+                        force_snake_case,
+                        false,
+                    )?;
 
-                traversal
-                    .line_data
-                    .add_data(field_name, Value::Object(inner_insert.data));
+                    traversal
+                        .line_data
+                        .add_data(field_name, Value::Object(inner_insert.data));
+                }
+                Value::Null() => traversal.line_data.add_data(field_name, Value::Null()),
+                _ => {}
             }
         }
 

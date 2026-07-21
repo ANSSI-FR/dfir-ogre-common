@@ -633,6 +633,77 @@ mod tests {
     }
 
     #[test]
+    fn mapped_null_object_is_preserved_for_include_empty_json_and_csv() {
+        let output_folder = test_output_folder("output_mapped_null_object");
+        let base_file_name = "mapped_null";
+        let field_mapping = FieldMapping::new(
+            vec![Field::Object {
+                name: FieldName::new("security_descriptor".to_owned(), false, None, None, None),
+                fields: vec![Field::Single {
+                    name: FieldName::new("owner_sid".to_owned(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                }],
+                ignore: false,
+            }],
+            None,
+        );
+        let output_configs = ["jsonl", "csv"]
+            .into_iter()
+            .map(|format| {
+                OutputConfiguration::new(
+                    base_file_name.to_owned(),
+                    output_folder.display().to_string(),
+                    "file".to_owned(),
+                    format.to_owned(),
+                    "iso".to_owned(),
+                    false,
+                    true,
+                    HashMap::new(),
+                )
+            })
+            .collect();
+        let mut output = Output::new(
+            RunConfiguration::new(output_configs, true, None),
+            mapped_plugin_config("events", field_mapping),
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("security_descriptor", Value::Null());
+
+        output.write(&mut record).unwrap();
+        output.finalize().unwrap();
+
+        let json: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("mapped_null.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        assert_eq!(
+            json.get("security_descriptor"),
+            Some(&serde_json::Value::Null)
+        );
+
+        let csv = fs::read_to_string(output_folder.join("mapped_null.events.csv")).unwrap();
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(csv.as_bytes());
+        assert_eq!(
+            reader.headers().unwrap().iter().collect::<Vec<_>>(),
+            vec!["security_descriptor", "ogre_md"]
+        );
+        let row = reader.records().next().unwrap().unwrap();
+        assert_eq!(&row[0], "");
+        assert_eq!(row.len(), 2);
+
+        drop(output);
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
     fn normalized_jsonl_alone_generates_data_and_timeline_ids() {
         let output_folder = test_output_folder("output_normalized_json_only");
         let base_file_name = "json_only";
