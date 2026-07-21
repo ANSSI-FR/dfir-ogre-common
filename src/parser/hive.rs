@@ -1082,6 +1082,7 @@ mod tests {
             .collect();
 
         assert_eq!(expected_lines, lines.len());
+        assert!(lines.iter().all(|line| line.get("values").is_none()));
 
         let paths: HashSet<&str> = lines
             .iter()
@@ -1136,6 +1137,148 @@ mod tests {
         assert_eq!(placeholder["is_placeholder"], true);
         assert!(placeholder["mtime"].as_str().is_some());
         assert!(placeholder["security_descriptor"].is_object());
+    }
+
+    #[test]
+    fn hive_values_csv_outputs_follow_flat_schema() {
+        let output_folder = Path::new(".tmp").join("hive_values_csv_schema");
+        if output_folder.exists() {
+            fs::remove_dir_all(&output_folder).unwrap();
+        }
+        fs::create_dir_all(&output_folder).unwrap();
+
+        let outputs = [
+            ("hive_values_regular", "csv", false),
+            ("hive_values_normalized", "normalized_csv", true),
+        ];
+        let output_configs = outputs
+            .iter()
+            .map(|(base_file_name, format, _)| {
+                OutputConfiguration::new(
+                    (*base_file_name).to_owned(),
+                    output_folder.display().to_string(),
+                    "file".to_owned(),
+                    (*format).to_owned(),
+                    "iso".to_owned(),
+                    false,
+                    true,
+                    HashMap::new(),
+                )
+            })
+            .collect();
+
+        let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+        let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
+        let report = parse_hive_values(
+            "test_data/hive/testhive",
+            RunConfiguration::new(output_configs, true, None),
+            plugin_config,
+            Metadata::new("test".into()),
+            None,
+            None,
+        );
+        assert_eq!(report.last_error, None);
+
+        let data_fields = [
+            "path",
+            "mtime",
+            "security_descriptor",
+            "name",
+            "data",
+            "type",
+            "size",
+            "is_placeholder",
+            "invalid_signature",
+            "error",
+        ];
+
+        for (base_file_name, _, normalized) in outputs {
+            let csv_path = output_folder.join(format!("{base_file_name}.hive.csv"));
+            let csv_data = fs::read_to_string(csv_path).unwrap();
+            let mut reader = csv::ReaderBuilder::new()
+                .delimiter(b';')
+                .from_reader(csv_data.as_bytes());
+            let headers = reader.headers().unwrap().clone();
+            let mut expected_headers = data_fields.to_vec();
+            if normalized {
+                expected_headers.extend(["ogre_id", "ogre_md_id"]);
+            } else {
+                expected_headers.push("ogre_md");
+            }
+            assert_eq!(expected_headers, headers.iter().collect::<Vec<_>>());
+
+            let rows = reader.records().collect::<Result<Vec<_>, _>>().unwrap();
+            assert_eq!(537, rows.len());
+            assert!(rows.iter().all(|row| row.len() == headers.len()));
+
+            let path_index = headers.iter().position(|field| field == "path").unwrap();
+            let placeholder_index = headers
+                .iter()
+                .position(|field| field == "is_placeholder")
+                .unwrap();
+            let descriptor_index = headers
+                .iter()
+                .position(|field| field == "security_descriptor")
+                .unwrap();
+            let placeholder = rows
+                .iter()
+                .find(|row| &row[path_index] == "\\character-encoding-test")
+                .unwrap();
+            assert_eq!(&placeholder[placeholder_index], "true");
+            let descriptor: serde_json::Value =
+                serde_json::from_str(&placeholder[descriptor_index]).unwrap();
+            assert_eq!(descriptor["owner_sid"], "S-1-5-32-544");
+        }
+    }
+
+    #[test]
+    fn hive_values_timeline_uses_key_metadata_and_value_name() {
+        let output_folder = Path::new(".tmp").join("hive_values_timeline_schema");
+        if output_folder.exists() {
+            fs::remove_dir_all(&output_folder).unwrap();
+        }
+        fs::create_dir_all(&output_folder).unwrap();
+
+        let base_file_name = "hive_values_timeline";
+        let output_conf = OutputConfiguration::new(
+            base_file_name.to_owned(),
+            output_folder.display().to_string(),
+            "file".to_owned(),
+            "jsonl".to_owned(),
+            "iso".to_owned(),
+            true,
+            true,
+            HashMap::new(),
+        );
+        let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+        let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
+
+        let report = parse_hive_values(
+            "test_data/hive/testhive",
+            RunConfiguration::new(vec![output_conf], true, None),
+            plugin_config,
+            Metadata::new("test".into()),
+            None,
+            None,
+        );
+        assert_eq!(report.last_error, None);
+        assert_eq!(537, report.output_reports[0].file_reports[0].num_lines);
+
+        let timeline_path = output_folder.join(format!("{base_file_name}.hive.jsonl"));
+        let timeline = fs::read_to_string(timeline_path).unwrap();
+        let lines: Vec<serde_json::Value> = timeline
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(537, lines.len());
+
+        let event = lines
+            .iter()
+            .find(|line| line["data"]["path"] == "\\big-data-test" && line["data"]["name"] == "A")
+            .unwrap();
+        assert_eq!(event["timestamp"], "2023-01-18T11:39:48.154060+00:00");
+        assert_eq!(event["related_user"], "S-1-5-32-544");
+        assert_eq!(event["description"], "path: \\big-data-test - name: A");
     }
 
     #[test]
