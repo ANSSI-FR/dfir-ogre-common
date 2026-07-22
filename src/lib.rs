@@ -18,6 +18,8 @@ mod record;
 mod registry_api;
 mod serialise;
 mod seven_zip_unpack;
+#[cfg(test)]
+mod test_utils;
 mod timeline;
 mod value;
 mod windows_utils;

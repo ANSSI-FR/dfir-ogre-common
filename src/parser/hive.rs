@@ -300,6 +300,7 @@ const HIVE_VALUE_ERROR: &str = "error";
 const HIVE_VALUE_INVALID_SIGNATURE: &str = "invalid_signature";
 const HIVE_VALUE_SECURITY_DESCRIPTOR: &str = "security_descriptor";
 const HIVE_VALUE_IS_PLACEHOLDER: &str = "is_placeholder";
+const MAX_DWORD_SCALAR_SIZE: u32 = 8;
 
 /// Extract Keys from a Windows Hive file
 ///
@@ -586,18 +587,20 @@ where
                 let hex_val = get_hex_value(&value, truncate_after)?;
                 record.add(HIVE_VALUE_DATA, hex_val);
             }
-            KeyValueDataType::RegDWord => {
-                record.add(HIVE_VALUE_TYPE, Value::String("REG_DWORD_LE".to_owned()));
-                let dword_data = value.dword_data()?;
-                let value = Value::Int(dword_data as i64);
-                record.add(HIVE_VALUE_DATA, value);
-            }
+            KeyValueDataType::RegDWord | KeyValueDataType::RegDWordBigEndian => {
+                let value_type = match value_type {
+                    KeyValueDataType::RegDWord => "REG_DWORD_LE",
+                    KeyValueDataType::RegDWordBigEndian => "REG_DWORD_BE",
+                    _ => unreachable!(),
+                };
+                record.add(HIVE_VALUE_TYPE, Value::String(value_type.to_owned()));
 
-            KeyValueDataType::RegDWordBigEndian => {
-                record.add(HIVE_VALUE_TYPE, Value::String("REG_DWORD_BE".to_owned()));
-                let dword_data = value.dword_data()?;
-                let value = Value::Int(dword_data as i64);
-                record.add(HIVE_VALUE_DATA, value);
+                let parsed_data = if value.data_size() > MAX_DWORD_SCALAR_SIZE {
+                    get_hex_value(&value, truncate_after)?
+                } else {
+                    Value::Int(value.dword_data()? as i64)
+                };
+                record.add(HIVE_VALUE_DATA, parsed_data);
             }
             KeyValueDataType::RegMultiSZ => {
                 record.add(HIVE_VALUE_TYPE, Value::String("REG_MULTI_SZ".to_owned()));
@@ -1463,5 +1466,60 @@ mod tests {
             .collect();
 
         assert_eq!(expected_lines, lines.len());
+    }
+
+    #[test]
+    fn oversized_dword_values_fall_back_to_hex_without_errors() {
+        for (data_type, expected_type, suffix) in [
+            (KeyValueDataType::RegDWord, "REG_DWORD_LE", "le"),
+            (KeyValueDataType::RegDWordBigEndian, "REG_DWORD_BE", "be"),
+        ] {
+            let output_folder = ".tmp";
+            let fixture = Path::new(output_folder).join(format!("oversized_dword_{suffix}.hive"));
+            let raw_data = crate::test_utils::write_oversized_dword_fixture(&fixture, data_type);
+            let base_file_name = format!("hive_values_oversized_dword_{suffix}");
+            let targetfile = format!("{output_folder}/{base_file_name}.hive.jsonl");
+
+            if Path::new(&targetfile).exists() {
+                fs::remove_file(&targetfile).unwrap();
+            }
+
+            let output_conf = OutputConfiguration::new(
+                base_file_name,
+                output_folder.to_string(),
+                "file".to_string(),
+                "jsonl".to_string(),
+                "iso".to_string(),
+                false,
+                false,
+                HashMap::new(),
+            );
+            let xml = fs::read_to_string("test_data/hive/hive.xml").unwrap();
+            let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
+
+            let report = parse_hive_values(
+                fixture.to_str().unwrap(),
+                RunConfiguration::new(vec![output_conf], true, None),
+                plugin_config,
+                Metadata::new("test".into()),
+                None,
+                Some(r"^\\SAM\\Domains\\Account\\Users\\000001F4$".to_owned()),
+            );
+
+            assert_eq!(report.num_errors, 0);
+            assert_eq!(report.last_error, None);
+
+            let jsonl = fs::read_to_string(targetfile).unwrap();
+            let value = jsonl
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .find(|line| line["name"] == "F")
+                .unwrap();
+
+            assert_eq!(value["type"], expected_type);
+            assert_eq!(value["size"], 80);
+            assert_eq!(value["data"], format!("0x{}", hex::encode(raw_data)));
+            assert!(value.get("error").is_none());
+        }
     }
 }

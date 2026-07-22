@@ -62,6 +62,7 @@ use std::{fs, path::Path};
 use dfir_nt_hive::{Hive, KeyValueDataType};
 
 const KEY_VALUE_DATA_TYPE_OFFSET: usize = 12;
+const HIVE_BASE_BLOCK_SIZE: usize = 4096;
 
 pub(crate) fn write_oversized_dword_fixture(
     target: &Path,
@@ -87,7 +88,7 @@ pub(crate) fn write_oversized_dword_fixture(
         assert_eq!(value.data_size(), 80);
 
         (
-            value.header_range.start + KEY_VALUE_DATA_TYPE_OFFSET,
+            HIVE_BASE_BLOCK_SIZE + value.header_range.start + KEY_VALUE_DATA_TYPE_OFFSET,
             value.data().unwrap().into_vec().unwrap(),
         )
     };
