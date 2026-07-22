@@ -19,6 +19,8 @@ use pyo3::types::PyType;
 use regex::Regex;
 use zerocopy::SplitByteSlice;
 
+const MAX_DWORD_SCALAR_SIZE: u32 = 8;
+
 #[pyclass]
 /// Represents a registry hive loaded from a file.
 ///
@@ -683,14 +685,18 @@ where
                 hive_value.data_type = DataType::REG_BINARY;
                 hive_value.bin_data = Some(get_bin_value(&value)?);
             }
-            KeyValueDataType::RegDWord => {
-                hive_value.data_type = DataType::REG_DWORD_LE;
-                hive_value.int_data = Some(value.dword_data()? as i64);
-            }
+            KeyValueDataType::RegDWord | KeyValueDataType::RegDWordBigEndian => {
+                hive_value.data_type = match value_type {
+                    KeyValueDataType::RegDWord => DataType::REG_DWORD_LE,
+                    KeyValueDataType::RegDWordBigEndian => DataType::REG_DWORD_BE,
+                    _ => unreachable!(),
+                };
 
-            KeyValueDataType::RegDWordBigEndian => {
-                hive_value.data_type = DataType::REG_DWORD_BE;
-                hive_value.int_data = Some(value.dword_data()? as i64);
+                if value.data_size() > MAX_DWORD_SCALAR_SIZE {
+                    hive_value.bin_data = Some(get_bin_value(&value)?);
+                } else {
+                    hive_value.int_data = Some(value.dword_data()? as i64);
+                }
             }
             KeyValueDataType::RegMultiSZ => {
                 hive_value.data_type = DataType::REG_MULTI_SZ;
@@ -778,6 +784,8 @@ enum MatchStatus {
 
 #[cfg(test)]
 mod tests {
+
+    use std::path::Path;
 
     use super::*;
     #[test]
@@ -1077,5 +1085,35 @@ mod tests {
         assert_eq!(5, bin_data.len());
 
         assert_eq!("0102030405", hex::encode(&bin_data))
+    }
+
+    #[test]
+    fn oversized_dword_values_use_raw_bytes_without_errors() {
+        for (data_type, expected_type, suffix) in [
+            (KeyValueDataType::RegDWord, "REG_DWORD_LE", "le"),
+            (KeyValueDataType::RegDWordBigEndian, "REG_DWORD_BE", "be"),
+        ] {
+            let fixture = Path::new(".tmp").join(format!("registry_oversized_dword_{suffix}.hive"));
+            let raw_data = crate::test_utils::write_oversized_dword_fixture(&fixture, data_type);
+            let registry = Registry::load_registry(fixture.to_str().unwrap(), "").unwrap();
+            let key = registry
+                .glob_keys(r"\SAM\Domains\Account\Users\000001F4")
+                .unwrap()
+                .pop()
+                .unwrap();
+            let value = key.value("F").unwrap();
+
+            assert_eq!(value.data_type.to_string(), expected_type);
+            assert_eq!(value.int_data, None);
+            assert_eq!(value.bin_data.as_deref(), Some(raw_data.as_slice()));
+            assert_eq!(value.error, None);
+
+            let record = value.to_record();
+            assert_eq!(
+                record.get("data"),
+                Some(&Value::String(format!("0x{}", hex::encode(raw_data))))
+            );
+            assert!(record.get("error").is_none());
+        }
     }
 }
