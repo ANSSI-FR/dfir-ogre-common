@@ -147,9 +147,9 @@ CREATE TABLE analytics_metadata
     archive_filename Nullable(String),
     original_filename Nullable(String),
     vss Nullable(String),
-    orc_start_date Nullable(String),
-    creation_date Nullable(String),
-    modif_date Nullable(String)
+    orc_start_date Nullable(DateTime64(6, 'UTC')),
+    creation_date Nullable(DateTime64(6, 'UTC')),
+    modif_date Nullable(DateTime64(6, 'UTC'))
 )
 ENGINE = ReplacingMergeTree()
 ORDER BY id;
@@ -189,10 +189,10 @@ INSERT INTO analytics_timeline FORMAT JSONEachRow
 -- stream <base>.<data_type>.tl.jsonl here
 ```
 
-ClickHouse can parse the configured ISO-8601 timeline timestamps with an
-appropriate date-time input setting. Optional metadata dates remain strings so
-their configured representation is preserved; parse them in a view or transform
-when a typed metadata date is useful.
+Use ClickHouse's best-effort date-time input mode for the configured ISO-8601
+timeline and metadata timestamps. If producers use mixed date formats, stage
+those values as strings and normalize them before inserting into these typed
+tables.
 
 ## Per-`data_type` views
 
