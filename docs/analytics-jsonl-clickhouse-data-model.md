@@ -1,8 +1,9 @@
 # `analytics_jsonl` data model and ClickHouse mapping
 
-This document describes the rows produced by `analytics_jsonl` and a compact
-ClickHouse model that retains each complete logical row. The examples target
-version 25.3 or newer, where the native `JSON` type is production-ready.
+This document describes the rows produced by `analytics_jsonl` and a generic
+ClickHouse schema for ingesting them. The examples assume a ClickHouse version
+with the native `JSON` type enabled and use `date_format: "iso_utc"` so timeline
+timestamps load into `DateTime64(6, 'UTC')` consistently.
 
 ## Output files
 
@@ -11,53 +12,50 @@ appends one JSON object per line to:
 
 | File | Contents | Present when |
 | --- | --- | --- |
-| `<base>.<data_type>.jsonl` | Artifact data rows | Always |
+| `<base>.<data_type>.jsonl` | Enveloped artifact data rows | Always |
 | `ogre_metadata.jsonl` | Artifact-source metadata | Always |
 | `<base>.<data_type>.tl.jsonl` | Timeline rows | `with_timeline: true` |
 
-Gzip output uses the same names with a `.gz` suffix. Main data rows are enriched
-whether or not timeline output is enabled.
+Gzip output uses the same names with a `.gz` suffix. Main rows use the same
+envelope whether or not timeline output is enabled.
 
-## Relationships
-
-The three row types form these logical relationships:
-
-| From | To | Meaning |
-| --- | --- | --- |
-| `data.ogre_md_id` | `metadata.id` | Metadata for the artifact row |
-| (`timeline.data_id`, `timeline.metadata_id`) | (`data.ogre_id`, `data.ogre_md_id`) | Artifact row that produced the timeline row |
-| `timeline.metadata_id` | `metadata.id` | Metadata for the timeline row |
-
-One data row may produce zero, one, or several timeline rows. Treat
-(`ogre_id`, `ogre_md_id`) as the data-row identity when joining: `ogre_id`
-includes the record content plus selected source fields, but not every metadata
-field, so distinct metadata rows can share it. IDs should be stored as opaque
-`String` values. ClickHouse primary and sorting keys do not enforce uniqueness,
-so ingestion must choose its own replay/deduplication policy using the composite
-identity where appropriate.
+`analytics_jsonl` rejects `timeline_include_undated: true`. Consequently, every
+emitted analytics timeline row has a timestamp.
 
 ## Main data rows
 
-Main rows combine a fixed envelope with fields defined by the selected artifact
-mapping:
+Each main row has exactly five top-level fields:
+
+```json
+{
+  "ogre_id": "<generated-data-id>",
+  "computer": "host-01",
+  "data_type": "evtx",
+  "ogre_md_id": "<metadata-id>",
+  "data": {
+    "timestamp": "2026-08-06T12:00:00.000000+00:00",
+    "system": {"computer": "event-host"},
+    "event_data": {}
+  }
+}
+```
 
 | Field | JSON type | Contract |
 | --- | --- | --- |
-| `ogre_id` | string | Data-content identifier used with `ogre_md_id` for timeline joins |
-| `ogre_md_id` | string | Metadata identifier used by `metadata.id` and in the composite data identity |
-| `computer` | string | Always emitted from `Metadata.computer` |
-| `data_type` | string | Always emitted from `Metadata.data_type` |
-| all other fields | any JSON value | Artifact-specific payload |
+| `ogre_id` | string | Generated identifier for this parsed data row |
+| `computer` | string | Sourced from `Metadata.computer` |
+| `data_type` | string | Sourced from `Metadata.data_type` |
+| `ogre_md_id` | string | Metadata identifier |
+| `data` | object | Complete parsed and mapped artifact record |
 
-`computer` and `data_type` are reserved at the top level. If the parsed artifact
-contains either field, the metadata value replaces it. Fields with those names
-inside nested objects or arrays are preserved.
+The `data` object is serialized without filtering or overwriting it. If an
+artifact itself contains fields named `ogre_id`, `computer`, `data_type`,
+`ogre_md_id`, or `data`, those values remain available under `data.*`. They are
+independent of the technical fields in the outer envelope.
 
-Example:
-
-```json
-{"event":"login","when":"2026-08-06T12:00:00.000000+00:00","ogre_id":"<data-id>","computer":"host-01","data_type":"events","ogre_md_id":"<metadata-id>"}
-```
+With `include_empty: false`, null fields and null array elements inside `data`
+are omitted according to the normal JSON serializer. The outer five fields are
+always emitted.
 
 ## Metadata rows
 
@@ -83,62 +81,58 @@ Optional metadata fields are omitted rather than emitted as `null`.
 
 | Field | JSON type | Contract |
 | --- | --- | --- |
-| `id` | string | Timeline-row identifier |
-| `computer` | string | Always sourced from the same metadata as the data row |
-| `timestamp` | formatted string or `null` | Event time; `null` only for included undated rows |
+| `id` | string | Generated timeline-row identifier |
+| `computer` | string | Sourced from the same metadata as the main row |
+| `timestamp` | formatted string | Timeline event time; never null for analytics output |
 | `timestamp_meaning` | string | Meaning or source of the timestamp |
-| `data_type` | string | Timeline classification from the timeline mapping |
+| `data_type` | string | Sourced from the same metadata as the main row |
 | `related_user` | string | Related user, possibly empty |
 | `description` | string | Human-readable description, possibly empty |
 | `additional_description` | string | Additional description, possibly empty |
-| `metadata_id` | string | Joins to `metadata.id` and, with `data_id`, to `data.ogre_md_id` |
-| `data_id` | string | Joins to `data.ogre_id` together with `metadata_id` |
+| `metadata_id` | string | Metadata identifier |
+| `data_id` | string | Generated identifier of the source main row |
 
-Timeline `data_type` is deliberately independent of the main row's `data_type`.
-For example, a main `events` row may produce a `timeline-events` row. Do not use
-the two columns as a join key.
+The analytics formatter projects metadata `computer` and `data_type` into each
+timeline row. It does not change the stored timeline object or its generated
+`id`. The timeline `data_id` is the same generated value exposed as `ogre_id` by
+the source main-row envelope.
 
-## JSON value conventions
+## Relationships
 
-Artifact payload fields can be strings, signed 64-bit integers, finite floats,
-booleans, arrays, nested objects, dates serialized as strings, or nulls. With
-`include_empty: false`, null object fields and null array elements are omitted.
-Non-finite floats serialize as `null`.
+The exact logical relationships are:
 
-All date fields use the configured `date_format`. The default `iso_utc` format is
-an ISO-8601 string with six fractional digits and a UTC offset. A typed ClickHouse
-timestamp schema should therefore keep `date_format` fixed; otherwise ingest dates
-as `String` and parse them in a view or staging transform.
+```text
+analytics_data.ogre_md_id -> analytics_metadata.id
+analytics_timeline.metadata_id -> analytics_metadata.id
+(analytics_timeline.data_type, analytics_timeline.computer, analytics_timeline.data_id)
+    -> (analytics_data.data_type, analytics_data.computer, analytics_data.ogre_id)
+```
 
-## Recommended ClickHouse model
+One data row may produce zero, one, or several timeline rows. IDs are opaque
+strings. The timeline-to-data join deliberately does not include a metadata ID;
+it uses `data_type`, `computer`, and the generated data ID for lookup locality
+and performance. Metadata remains independently reachable from either row type.
 
-Keep each complete data row in one native `JSON` column and materialize its four
-stable envelope fields. This preserves the full object, enables efficient joins,
-and supports per-`data_type` views without defining every artifact field up front.
+## ClickHouse tables
+
+Each JSONL line maps directly to table columns with the `JSONEachRow` input
+format. The outer envelope becomes ordinary columns, and only the nested `data`
+object is stored in the native JSON column.
 
 ```sql
 CREATE TABLE analytics_data
 (
-    payload JSON(
-        ogre_id String,
-        ogre_md_id String,
-        computer String,
-        data_type String
-    ),
-    ogre_id String MATERIALIZED getSubcolumn(payload, 'ogre_id'),
-    ogre_md_id String MATERIALIZED getSubcolumn(payload, 'ogre_md_id'),
-    computer String MATERIALIZED getSubcolumn(payload, 'computer'),
-    data_type String MATERIALIZED getSubcolumn(payload, 'data_type')
+    ogre_id String,
+    computer String,
+    data_type String,
+    ogre_md_id String,
+    data JSON
 )
-ENGINE = MergeTree
-ORDER BY (data_type, computer, ogre_id, ogre_md_id);
+ENGINE = ReplacingMergeTree()
+ORDER BY (data_type, computer, ogre_id);
 ```
 
-Load each source line as one JSON object into `payload` with ClickHouse's
-`JSONAsObject` input format or an equivalent client-side mapping. The explicit
-JSON path hints keep the four envelope paths typed as strings.
-
-Assuming the producer uses `date_format: "iso_utc"`, the sidecar tables can be:
+The metadata sidecar can be loaded into this table:
 
 ```sql
 CREATE TABLE analytics_metadata
@@ -153,18 +147,23 @@ CREATE TABLE analytics_metadata
     archive_filename Nullable(String),
     original_filename Nullable(String),
     vss Nullable(String),
-    orc_start_date Nullable(DateTime64(6, 'UTC')),
-    creation_date Nullable(DateTime64(6, 'UTC')),
-    modif_date Nullable(DateTime64(6, 'UTC'))
+    orc_start_date Nullable(String),
+    creation_date Nullable(String),
+    modif_date Nullable(String)
 )
 ENGINE = ReplacingMergeTree()
 ORDER BY id;
+```
 
+Analytics timeline timestamps are guaranteed to be present, so the timeline
+table uses a non-nullable timestamp:
+
+```sql
 CREATE TABLE analytics_timeline
 (
     id String,
     computer String,
-    timestamp Nullable(DateTime64(6, 'UTC')),
+    timestamp DateTime64(6, 'UTC'),
     timestamp_meaning String,
     data_type String,
     related_user String,
@@ -173,74 +172,96 @@ CREATE TABLE analytics_timeline
     metadata_id String,
     data_id String
 )
-ENGINE = MergeTree
-ORDER BY (data_id, metadata_id, id);
+ENGINE = ReplacingMergeTree()
+ORDER BY (computer, data_type, timestamp, data_id, id);
 ```
 
-Use ClickHouse's best-effort datetime input mode for the ISO-8601 strings when
-loading these typed sidecar tables. Another safe option is to stage the dates as
-`String` and convert them with `parseDateTime64BestEffortOrNull`.
+For direct ingestion, for example:
 
-`ReplacingMergeTree` is useful for metadata because append-mode output can repeat
-the same metadata row across runs; replacement happens during background merges,
-not as a uniqueness constraint at insert time. Use plain `MergeTree` instead if
-every ingestion occurrence must remain visible. The example ordering keys favor
-the documented joins; production partitioning, ordering, codecs, and retention
-should follow the actual query volume and access patterns.
+```sql
+INSERT INTO analytics_data FORMAT JSONEachRow
+-- stream <base>.<data_type>.jsonl here
+
+INSERT INTO analytics_metadata FORMAT JSONEachRow
+-- stream ogre_metadata.jsonl here
+
+INSERT INTO analytics_timeline FORMAT JSONEachRow
+-- stream <base>.<data_type>.tl.jsonl here
+```
+
+ClickHouse can parse the configured ISO-8601 timeline timestamps with an
+appropriate date-time input setting. Optional metadata dates remain strings so
+their configured representation is preserved; parse them in a view or transform
+when a typed metadata date is useful.
 
 ## Per-`data_type` views
 
-A basic view filters the generic table while retaining its dynamic payload:
+The generic table retains `data_type`, making it easy to expose one view per
+artifact family while preserving the common join columns:
 
 ```sql
-CREATE VIEW analytics_data_events AS
-SELECT ogre_id, ogre_md_id, computer, data_type, payload
+CREATE VIEW analytics_data_evtx AS
+SELECT ogre_id, ogre_md_id, computer, data_type, data
 FROM analytics_data
-WHERE data_type = 'events';
+WHERE data_type = 'evtx';
 ```
 
-A more specific view can project known JSON paths with stable types while leaving
-the canonical table unchanged:
+A typed view can project frequently queried artifact paths while the generic
+table remains schema-flexible:
 
 ```sql
-CREATE VIEW analytics_data_events_typed AS
+CREATE VIEW analytics_data_evtx_typed AS
 SELECT
     ogre_id,
     ogre_md_id,
     computer,
-    payload.event.:String AS event,
-    payload.`when`.:String AS event_time
+    data.system.computer.:String AS event_computer
 FROM analytics_data
-WHERE data_type = 'events';
+WHERE data_type = 'evtx';
 ```
 
-Timeline-to-data lookup then uses the materialized identifiers:
+## Timeline, data, and metadata join
+
+Join timeline rows to main rows with `data_type`, `computer`, and the generated
+data ID. Do not add a metadata-ID predicate to that join:
 
 ```sql
-SELECT t.*, d.payload, m.original_filename
+SELECT t.*, d.data, m.original_filename
 FROM analytics_timeline AS t
 LEFT JOIN analytics_data AS d
-    ON d.ogre_id = t.data_id
-   AND d.ogre_md_id = t.metadata_id
-LEFT JOIN analytics_metadata AS m ON m.id = t.metadata_id;
+    ON d.data_type = t.data_type
+   AND d.computer = t.computer
+   AND d.ogre_id = t.data_id
+LEFT JOIN analytics_metadata AS m
+    ON m.id = t.metadata_id;
 ```
 
-## ClickHouse notes
+## Replacement and operational notes
 
-- Native `JSON` is production-ready in ClickHouse 25.3 and is intended for dynamic
-  data that is queried by individual paths.
-- `JSONAsObject` treats each input object as one `JSON` value, which matches the
-  flat `analytics_jsonl` data rows.
-- ClickHouse flattens JSON paths internally. Literal dots in artifact field names
-  can therefore be interpreted as nested paths; normalize or explicitly test such
-  keys before relying on them in views.
-- Monitor the number of dynamic paths. Frequently queried paths can be given type
-  hints or promoted into materialized columns later.
+`ReplacingMergeTree` replacement happens during background merges; it does not
+enforce immediate uniqueness when rows are inserted. Use `FINAL` where its cost
+is acceptable, or apply an ingestion/query deduplication strategy when queries
+must observe immediate logical deduplication.
+
+The ordering keys are designed around common filtering and join access:
+
+- Main data: `(data_type, computer, ogre_id)`.
+- Timeline: `(computer, data_type, timestamp, data_id, id)`.
+- Metadata: `id`.
+
+`ogre_md_id` and `metadata_id` remain regular columns for metadata lookup; they
+are intentionally absent from the data and timeline ordering keys respectively.
+Production partitioning, codecs, retention, and additional projections should
+follow observed volume and query patterns.
+
+ClickHouse flattens JSON paths internally. Literal dots in artifact field names
+can therefore be interpreted as nested paths; test those keys before depending
+on them in typed views. Monitor dynamic-path counts and promote frequently used
+paths into typed views or projections as the schema stabilizes.
 
 References:
 
 - [ClickHouse JSON data type](https://clickhouse.com/docs/reference/data-types/newjson)
-- [ClickHouse JSONAsObject format](https://clickhouse.com/docs/reference/formats/JSON/JSONAsObject)
 - [ClickHouse JSONEachRow format](https://clickhouse.com/docs/reference/formats/JSON/JSONEachRow)
-- [ClickHouse views](https://clickhouse.com/docs/reference/statements/create/view)
-- [ClickHouse date and datetime parsing](https://clickhouse.com/blog/parsing-dates-datetimes)
+- [ClickHouse views](https://clickhouse.com/docs/sql-reference/statements/create/view)
+- [ClickHouse ReplacingMergeTree](https://clickhouse.com/docs/reference/engines/table-engines/mergetree-family/replacingmergetree)
