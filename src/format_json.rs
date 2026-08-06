@@ -41,6 +41,9 @@ impl JsonExtraField<'_> {
     }
 }
 
+const ANALYTICS_COMPUTER_FIELD: &str = "computer";
+const ANALYTICS_DATA_TYPE_FIELD: &str = "data_type";
+
 fn json_serialise_record_with_extra_field(
     record: &Record,
     extra_key: &str,
@@ -61,6 +64,41 @@ fn json_serialise_record_with_extra_field(
             }
         }
         object.field_raw(extra_key, |buffer| extra_value.json_serialise(buffer));
+        object.finish();
+        Ok(())
+    })();
+    if result.is_err() {
+        buffer.truncate(start_len);
+    }
+    result
+}
+
+fn json_serialise_analytics_record(
+    record: &Record,
+    metadata: &Metadata,
+    metadata_id: &str,
+    buffer: &mut String,
+    date_codec: &DateOutputCodec,
+    include_empty: bool,
+) -> Result<(), Error> {
+    let start_len = buffer.len();
+    let result = (|| {
+        let mut object = JsonObjectWriter::new(buffer);
+        for (key, value) in record.iter() {
+            if key.as_str() == ANALYTICS_COMPUTER_FIELD || key.as_str() == ANALYTICS_DATA_TYPE_FIELD
+            {
+                continue;
+            }
+            let should_emit = include_empty || !matches!(value, Value::Null());
+            if should_emit {
+                object.try_field_raw(key, |buffer| {
+                    Value::json_serialise_value(value, buffer, date_codec, include_empty)
+                })?;
+            }
+        }
+        object.string_field(ANALYTICS_COMPUTER_FIELD, &metadata.computer);
+        object.string_field(ANALYTICS_DATA_TYPE_FIELD, &metadata.data_type);
+        object.string_field(OUTPUT_METADATA_ID_FIELD, metadata_id);
         object.finish();
         Ok(())
     })();
@@ -319,14 +357,25 @@ impl JsonFormatter {
         }
 
         self.line_buffer.clear();
-        json_serialise_record_with_extra_field(
-            &data.data,
-            OUTPUT_METADATA_ID_FIELD,
-            JsonExtraField::String(&line_builder.metadata_id),
-            &mut self.line_buffer,
-            &self.output_date_codec,
-            self.include_empty,
-        )?;
+        if self.mode == JsonMode::Analytics {
+            json_serialise_analytics_record(
+                &data.data,
+                &line_builder.metadata,
+                &line_builder.metadata_id,
+                &mut self.line_buffer,
+                &self.output_date_codec,
+                self.include_empty,
+            )?;
+        } else {
+            json_serialise_record_with_extra_field(
+                &data.data,
+                OUTPUT_METADATA_ID_FIELD,
+                JsonExtraField::String(&line_builder.metadata_id),
+                &mut self.line_buffer,
+                &self.output_date_codec,
+                self.include_empty,
+            )?;
+        }
 
         self.line_buffer.push('\n');
         self.data_writer.write(&mut self.line_buffer)?;
@@ -526,6 +575,76 @@ mod tests {
             buffer
         );
         assert!(!record.contains_key(OUTPUT_METADATA_FIELD));
+    }
+
+    #[test]
+    fn analytics_record_replaces_top_level_dimensions_and_preserves_nested_values() {
+        let mut nested = Record::new();
+        nested.add("computer", Value::String("nested-host".to_owned()));
+        nested.add("data_type", Value::String("nested-type".to_owned()));
+        let mut nested_array_item = Record::new();
+        nested_array_item.add("computer", Value::String("array-host".to_owned()));
+        nested_array_item.add("data_type", Value::String("array-type".to_owned()));
+
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+        record.add("computer", Value::String("input-host".to_owned()));
+        record.add("data_type", Value::String("input-type".to_owned()));
+        record.add("nested", Value::Object(nested));
+        record.add(
+            "items",
+            Value::Array(vec![Value::Object(nested_array_item)]),
+        );
+
+        let mut metadata = Metadata::new("meta\"host\n".to_owned());
+        metadata.data_type = "events\\kind".to_owned();
+        let mut buffer = String::new();
+
+        json_serialise_analytics_record(
+            &record,
+            &metadata,
+            "md-id",
+            &mut buffer,
+            &DateOutputCodec::Iso(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            buffer,
+            "{\"event\":\"login\",\"nested\":{\"computer\":\"nested-host\",\"data_type\":\"nested-type\"},\"items\":[{\"computer\":\"array-host\",\"data_type\":\"array-type\"}],\"computer\":\"meta\\\"host\\n\",\"data_type\":\"events\\\\kind\",\"ogre_md_id\":\"md-id\"}"
+        );
+        assert_eq!(
+            record.get("computer"),
+            Some(&Value::String("input-host".to_owned()))
+        );
+        assert_eq!(
+            record.get("data_type"),
+            Some(&Value::String("input-type".to_owned()))
+        );
+    }
+
+    #[test]
+    fn analytics_record_emits_empty_metadata_dimensions_when_empty_fields_are_excluded() {
+        let mut record = Record::new();
+        record.add("empty", Value::Null());
+        let metadata = Metadata::new(String::new());
+        let mut buffer = String::new();
+
+        json_serialise_analytics_record(
+            &record,
+            &metadata,
+            "md-id",
+            &mut buffer,
+            &DateOutputCodec::Iso(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            buffer,
+            "{\"computer\":\"\",\"data_type\":\"\",\"ogre_md_id\":\"md-id\"}"
+        );
     }
 
     #[test]
@@ -858,6 +977,66 @@ mod tests {
 
         remove_if_exists(&data_path);
         remove_if_exists(&metadata_path);
+    }
+
+    #[test]
+    fn analytics_gzip_finishes_enriched_data_and_metadata_streams() {
+        let output_folder = Path::new(TMP_FOLDER).join("test_analytics_json_gzip_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+        let output_folder_str = output_folder.to_str().unwrap();
+        let data_path = output_folder.join("analytics.events.jsonl.gz");
+        let metadata_path = output_folder.join("ogre_metadata.jsonl.gz");
+
+        let mut metadata = Metadata::new("host-json-gz".into());
+        metadata.data_type = "events".into();
+        let mut line_builder = LineBuilder::new(
+            metadata,
+            None,
+            FieldMapping::new(vec![], None),
+            true,
+            false,
+            true,
+        );
+        let mut output = JsonFormatter::new(
+            OutputType::Gzip,
+            output_folder_str,
+            "analytics.events",
+            DateOutputCodec::Iso(),
+            false,
+            false,
+            7,
+            FileReport {
+                format: "analytics_jsonl".to_owned(),
+                ..Default::default()
+            },
+            JsonMode::Analytics,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+        line_builder.build(&mut record).unwrap();
+
+        output.write_metadata(&line_builder).unwrap();
+        output.write_normalized(&line_builder).unwrap();
+        output.close().unwrap();
+
+        let mut data_decoder = GzDecoder::new(File::open(&data_path).unwrap());
+        let mut data = String::new();
+        data_decoder.read_to_string(&mut data).unwrap();
+        let data: serde_json::Value = serde_json::from_str(data.trim()).unwrap();
+
+        let mut metadata_decoder = GzDecoder::new(File::open(&metadata_path).unwrap());
+        let mut metadata = String::new();
+        metadata_decoder.read_to_string(&mut metadata).unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(metadata.trim()).unwrap();
+
+        assert_eq!(data["computer"], "host-json-gz");
+        assert_eq!(data["data_type"], "events");
+        assert_eq!(metadata["computer"], "host-json-gz");
+        assert_eq!(metadata["data_type"], "events");
+
+        remove_dir_if_exists(&output_folder);
     }
 
     /// Tests writing to a gzipped file.

@@ -680,6 +680,8 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(data["computer"], "host-output");
+        assert_eq!(data["data_type"], "events");
         assert!(data["ogre_id"].as_str().unwrap().len() > 10);
         assert!(data["ogre_md_id"].as_str().unwrap().len() > 10);
         assert_eq!(metadata["computer"], "host-output");
@@ -690,6 +692,54 @@ mod tests {
                 .iter()
                 .all(|report| report.format == "analytics_jsonl")
         );
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn analytics_dimensions_do_not_leak_into_standard_jsonl() {
+        let output_folder = test_output_folder("output_analytics_mixed");
+        let run_config = RunConfiguration::new(
+            vec![
+                normalized_output_config("analytics", &output_folder, "analytics_jsonl"),
+                json_output_config("standard", &output_folder, HashMap::new()),
+            ],
+            true,
+            None,
+        );
+        let mut output = Output::new(
+            run_config,
+            mapped_plugin_config("events", event_field_mapping()),
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+
+        output.write(&mut record).unwrap();
+        output.finalize().unwrap();
+        drop(output);
+
+        let analytics: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("analytics.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let standard: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("standard.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+
+        assert_eq!(analytics["computer"], "host-output");
+        assert_eq!(analytics["data_type"], "events");
+        assert!(standard.get("computer").is_none());
+        assert!(standard.get("data_type").is_none());
+        assert_eq!(standard["ogre_md"]["computer"], "host-output");
+        assert_eq!(standard["ogre_md"]["data_type"], "events");
 
         remove_dir_if_exists(&output_folder);
     }
