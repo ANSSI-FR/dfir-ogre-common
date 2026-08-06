@@ -979,7 +979,7 @@ mod tests {
     }
 
     #[test]
-    fn analytics_jsonl_enriches_main_and_timeline_rows() {
+    fn analytics_jsonl_writes_enveloped_joinable_rows() {
         let output_folder = test_output_folder("output_analytics_timeline");
         let event_field = Field::Single {
             name: FieldName::new("event".to_owned(), false, None, None, None),
@@ -1058,10 +1058,11 @@ mod tests {
         assert_eq!(data["data"]["event"], "login");
         assert_eq!(data["data"]["when"], "2026-08-06T12:00:00.000000+00:00");
         assert!(data.get("event").is_none());
-        assert_eq!(timeline["computer"], "metadata-host");
-        assert_eq!(timeline["data_type"], "timeline-events");
+        assert_eq!(timeline["computer"], data["computer"]);
+        assert_eq!(timeline["data_type"], data["data_type"]);
         assert_eq!(timeline["data_id"], data["ogre_id"]);
         assert_eq!(timeline["metadata_id"], data["ogre_md_id"]);
+        assert_eq!(timeline["data_type"], "events");
         assert_eq!(metadata["computer"], "metadata-host");
         assert_eq!(metadata["data_type"], "events");
         assert_eq!(reports.len(), 3);
@@ -1157,6 +1158,51 @@ mod tests {
         .unwrap();
         assert_eq!(inactive["event"], "invalid event");
         assert!(inactive.get("timestamp").is_none());
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn mixed_undated_construction_does_not_emit_analytics_timeline() {
+        let output_folder = test_output_folder("output_mixed_undated_analytics");
+        let mut plugin_config = mapped_plugin_config("events", event_field_mapping());
+        let mut timeline =
+            TimeLineBuilder::new(TimeLineType::Standard, "events".to_owned(), 0, None, None);
+        timeline.add_description_ouput_path(vec!["event".to_owned()]);
+        plugin_config.data_type_configs[0].timeline = Some(timeline);
+
+        let mut keep = json_output_config("standard_undated", &output_folder, HashMap::new());
+        keep.with_timeline = true;
+        keep.timeline_include_undated = true;
+
+        let mut analytics =
+            normalized_output_config("analytics_dated_only", &output_folder, "analytics_jsonl");
+        analytics.with_timeline = true;
+
+        let mut output = Output::new(
+            RunConfiguration::new(vec![keep, analytics], true, None),
+            plugin_config,
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("undated event".to_owned()));
+
+        output.write(&mut record).unwrap();
+        output.finalize().unwrap();
+        drop(output);
+
+        let standard =
+            fs::read_to_string(output_folder.join("standard_undated.events.jsonl")).unwrap();
+        let analytics_timeline =
+            fs::read_to_string(output_folder.join("analytics_dated_only.events.tl.jsonl")).unwrap();
+        assert_eq!(standard.lines().count(), 1);
+        assert!(
+            serde_json::from_str::<serde_json::Value>(standard.trim()).unwrap()["timestamp"]
+                .is_null()
+        );
+        assert!(analytics_timeline.is_empty());
 
         remove_dir_if_exists(&output_folder);
     }

@@ -410,13 +410,11 @@ mod tests {
             .iter()
             .find(|row| row["data_id"].as_str() == Some(data_id))
             .expect("timeline row linked to representative data row");
-        assert_eq!(timeline_row["data_id"].as_str(), Some(data_id));
+        assert_eq!(timeline_row["data_id"], data_row["ogre_id"]);
+        assert_eq!(timeline_row["computer"], data_row["computer"]);
+        assert_eq!(timeline_row["data_type"], data_row["data_type"]);
+        assert!(!timeline_row["timestamp"].is_null());
         assert_eq!(timeline_row["metadata_id"].as_str(), Some(metadata_id));
-        assert_eq!(
-            timeline_row["computer"].as_str(),
-            Some("analytics-test-host")
-        );
-        assert_eq!(timeline_row["data_type"].as_str(), Some("evtx"));
     }
 
     #[test]

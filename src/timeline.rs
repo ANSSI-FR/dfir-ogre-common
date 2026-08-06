@@ -60,6 +60,7 @@ pub(crate) struct TimelineSerializationContext<'a> {
     pub(crate) data: Option<&'a Record>,
     pub(crate) metadata_id: Option<&'a str>,
     pub(crate) computer_override: Option<&'a str>,
+    pub(crate) data_type_override: Option<&'a str>,
     pub(crate) data_id_override: Option<&'a str>,
 }
 
@@ -79,6 +80,7 @@ impl TimeLine {
                 data: self.data.as_ref(),
                 metadata_id: self.metadata_id.as_deref(),
                 computer_override: None,
+                data_type_override: None,
                 data_id_override: None,
             },
         )
@@ -106,7 +108,12 @@ impl TimeLine {
                 None => object.field_raw("timestamp", |buffer| buffer.push_str("null")),
             }
             object.string_field("timestamp_meaning", &self.timestamp_meaning);
-            object.string_field("data_type", &self.data_type);
+            object.string_field(
+                "data_type",
+                context
+                    .data_type_override
+                    .unwrap_or(self.data_type.as_str()),
+            );
             object.string_field("related_user", &self.related_user);
             object.string_field("description", &self.description);
             object.string_field("additional_description", &self.additional_description);
@@ -172,6 +179,7 @@ impl TimeLine {
                 data: self.data.as_ref(),
                 metadata_id: self.metadata_id.as_deref(),
                 computer_override: None,
+                data_type_override: None,
                 data_id_override: None,
             },
         )
@@ -1555,6 +1563,28 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["computer"], "metadata\"host\n");
         assert_eq!(tl.computer, stored_computer);
+    }
+
+    #[test]
+    fn timeline_json_context_data_type_override_wins_without_mutation() {
+        let tl = timeline_for_serialization_tests();
+        let stored_data_type = tl.data_type.clone();
+        let mut json = String::new();
+
+        tl.json_serialise_with_context(
+            &mut json,
+            &DateOutputCodec::IsoUtc(),
+            false,
+            TimelineSerializationContext {
+                data_type_override: Some("metadata-events"),
+                ..TimelineSerializationContext::default()
+            },
+        )
+        .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["data_type"], "metadata-events");
+        assert_eq!(tl.data_type, stored_data_type);
     }
 
     #[test]

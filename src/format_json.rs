@@ -280,6 +280,7 @@ impl JsonFormatter {
                         data: Some(&data.data),
                         metadata_id: timeline.metadata_id.as_deref(),
                         computer_override: None,
+                        data_type_override: None,
                         data_id_override: data.data_id.as_deref(),
                     },
                 )?;
@@ -343,6 +344,10 @@ impl JsonFormatter {
                         metadata_id: Some(&line_builder.metadata_id),
                         computer_override: match self.mode {
                             JsonMode::Analytics => Some(line_builder.metadata.computer.as_str()),
+                            JsonMode::Standard | JsonMode::Normalized => None,
+                        },
+                        data_type_override: match self.mode {
+                            JsonMode::Analytics => Some(line_builder.metadata.data_type.as_str()),
                             JsonMode::Standard | JsonMode::Normalized => None,
                         },
                         data_id_override: None,
@@ -987,6 +992,10 @@ mod tests {
         record.add("message", Value::String("login".to_owned()));
         line_builder.build(&mut record).unwrap();
         line_builder.line_data.timeline[0].computer = Some("stale-host".to_owned());
+        assert_eq!(
+            line_builder.line_data.timeline[0].data_type,
+            "timeline-events"
+        );
 
         let mut output = JsonFormatter::new(
             OutputType::File,
@@ -1011,9 +1020,14 @@ mod tests {
         let timeline: serde_json::Value =
             serde_json::from_str(fs::read_to_string(&timeline_path).unwrap().trim()).unwrap();
         assert_eq!(timeline["computer"], "metadata-host");
+        assert_eq!(timeline["data_type"], "events");
         assert_eq!(
             line_builder.line_data.timeline[0].computer.as_deref(),
             Some("stale-host")
+        );
+        assert_eq!(
+            line_builder.line_data.timeline[0].data_type,
+            "timeline-events"
         );
 
         remove_dir_if_exists(&output_folder);
