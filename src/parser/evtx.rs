@@ -330,6 +330,92 @@ mod tests {
     }
 
     #[test]
+    fn evtx_analytics_jsonl_writes_joinable_rows() {
+        let output_folder = test_folder("analytics");
+        let base_file_name = "evtx_kernel_pnp_analytics";
+        let data_path = output_folder.join(format!("{base_file_name}.evtx.jsonl"));
+        let metadata_path = output_folder.join("ogre_metadata.jsonl");
+        let timeline_path = output_folder.join(format!("{base_file_name}.evtx.tl.jsonl"));
+
+        let output_conf = OutputConfiguration::new(
+            base_file_name.to_owned(),
+            output_folder.display().to_string(),
+            "file".to_owned(),
+            "analytics_jsonl".to_owned(),
+            "iso".to_owned(),
+            true,
+            false,
+            HashMap::new(),
+        );
+        let configuration = RunConfiguration::new(vec![output_conf], true, None);
+        let xml = fs::read_to_string("test_data/evtx/evtx.xml").unwrap();
+        let plugin_config = PluginConfiguration::from_str(&xml, None, None).unwrap();
+
+        let report = parse_evtx(
+            "test_data/evtx/kernel_pnp.evtx",
+            configuration,
+            plugin_config,
+            Metadata::new("analytics-test-host".into()),
+        );
+
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.output_reports.len(), 1);
+        let file_reports = &report.output_reports[0].file_reports;
+        assert_eq!(file_reports.len(), 3);
+        assert!(
+            file_reports
+                .iter()
+                .all(|file_report| file_report.format == "analytics_jsonl")
+        );
+
+        let read_jsonl = |path: &Path| -> Vec<Value> {
+            fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        };
+        let data_rows = read_jsonl(&data_path);
+        let metadata_rows = read_jsonl(&metadata_path);
+        let timeline_rows = read_jsonl(&timeline_path);
+
+        assert_eq!(data_rows.len(), 123);
+        assert_eq!(metadata_rows.len(), 1);
+        assert_eq!(timeline_rows.len(), 123);
+
+        let data_row = &data_rows[3];
+        let data_id = data_row["ogre_id"].as_str().expect("analytics data id");
+        let metadata_id = data_row["ogre_md_id"]
+            .as_str()
+            .expect("analytics metadata id");
+        assert!(!data_id.is_empty());
+        assert!(!metadata_id.is_empty());
+        assert_eq!(data_row["computer"].as_str(), Some("analytics-test-host"));
+        assert_eq!(data_row["data_type"].as_str(), Some("evtx"));
+        assert_eq!(data_row["system"]["computer"].as_str(), Some("MINWINPC"));
+
+        let metadata_row = &metadata_rows[0];
+        assert_eq!(metadata_row["id"].as_str(), Some(metadata_id));
+        assert_eq!(
+            metadata_row["computer"].as_str(),
+            Some("analytics-test-host")
+        );
+        assert_eq!(metadata_row["data_type"].as_str(), Some("evtx"));
+
+        let timeline_row = timeline_rows
+            .iter()
+            .find(|row| row["data_id"].as_str() == Some(data_id))
+            .expect("timeline row linked to representative data row");
+        assert_eq!(timeline_row["data_id"].as_str(), Some(data_id));
+        assert_eq!(timeline_row["metadata_id"].as_str(), Some(metadata_id));
+        assert_eq!(
+            timeline_row["computer"].as_str(),
+            Some("analytics-test-host")
+        );
+        assert_eq!(timeline_row["data_type"].as_str(), Some("evtx"));
+    }
+
+    #[test]
     fn test_issue_6() {
         let input_file = "test_data/evtx/w7_evtx_system.evtx";
         let parser: EvtxParser<std::fs::File> = EvtxParser::from_path(input_file).unwrap();
