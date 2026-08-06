@@ -1,7 +1,7 @@
 use std::{fs::OpenOptions, path::Path, sync::Arc};
 
 use crate::{
-    DateOutputCodec, Error, FileReport, Metadata, Record, Value, escape_special_chars,
+    DateOutputCodec, Error, FileReport, Metadata, Record, escape_special_chars,
     line_builder::{LineBuilder, OUPUT_DATA_ID, OUTPUT_METADATA_FIELD, OUTPUT_METADATA_ID_FIELD},
     metadata::MetadataSerialized,
     output::OutputType,
@@ -43,6 +43,7 @@ impl JsonExtraField<'_> {
 
 const ANALYTICS_COMPUTER_FIELD: &str = "computer";
 const ANALYTICS_DATA_TYPE_FIELD: &str = "data_type";
+const ANALYTICS_DATA_FIELD: &str = "data";
 
 fn json_serialise_record_with_extra_field(
     record: &Record,
@@ -74,6 +75,7 @@ fn json_serialise_record_with_extra_field(
 
 fn json_serialise_analytics_record(
     record: &Record,
+    data_id: &str,
     metadata: &Metadata,
     metadata_id: &str,
     buffer: &mut String,
@@ -83,21 +85,13 @@ fn json_serialise_analytics_record(
     let start_len = buffer.len();
     let result = (|| {
         let mut object = JsonObjectWriter::new(buffer);
-        for (key, value) in record.iter() {
-            if key.as_str() == ANALYTICS_COMPUTER_FIELD || key.as_str() == ANALYTICS_DATA_TYPE_FIELD
-            {
-                continue;
-            }
-            let should_emit = include_empty || !matches!(value, Value::Null());
-            if should_emit {
-                object.try_field_raw(key, |buffer| {
-                    Value::json_serialise_value(value, buffer, date_codec, include_empty)
-                })?;
-            }
-        }
+        object.string_field(OUPUT_DATA_ID, data_id);
         object.string_field(ANALYTICS_COMPUTER_FIELD, &metadata.computer);
         object.string_field(ANALYTICS_DATA_TYPE_FIELD, &metadata.data_type);
         object.string_field(OUTPUT_METADATA_ID_FIELD, metadata_id);
+        object.try_field_raw(ANALYTICS_DATA_FIELD, |buffer| {
+            record.json_serialise(buffer, date_codec, include_empty)
+        })?;
         object.finish();
         Ok(())
     })();
@@ -365,8 +359,12 @@ impl JsonFormatter {
 
         self.line_buffer.clear();
         if self.mode == JsonMode::Analytics {
+            let data_id = data.data_id.as_deref().ok_or_else(|| {
+                Error::PluginError("analytics_jsonl requires a generated data id".to_owned())
+            })?;
             json_serialise_analytics_record(
                 &data.data,
+                data_id,
                 &line_builder.metadata,
                 &line_builder.metadata_id,
                 &mut self.line_buffer,
@@ -431,7 +429,7 @@ mod tests {
 
     use crate::{
         DateInputCodec, Field, FieldMapping, FieldName, Metadata, Parser, Record, TimeLineBuilder,
-        TimeLineType,
+        TimeLineType, Value,
     };
 
     use super::*;
@@ -612,50 +610,44 @@ mod tests {
     }
 
     #[test]
-    fn analytics_record_replaces_top_level_dimensions_and_preserves_nested_values() {
-        let mut nested = Record::new();
-        nested.add("computer", Value::String("nested-host".to_owned()));
-        nested.add("data_type", Value::String("nested-type".to_owned()));
-        let mut nested_array_item = Record::new();
-        nested_array_item.add("computer", Value::String("array-host".to_owned()));
-        nested_array_item.add("data_type", Value::String("array-type".to_owned()));
-
+    fn analytics_record_wraps_the_complete_unfiltered_record() {
         let mut record = Record::new();
         record.add("event", Value::String("login".to_owned()));
-        record.add("computer", Value::String("input-host".to_owned()));
-        record.add("data_type", Value::String("input-type".to_owned()));
-        record.add("nested", Value::Object(nested));
-        record.add(
-            "items",
-            Value::Array(vec![Value::Object(nested_array_item)]),
-        );
+        record.add("ogre_id", Value::String("artifact-id".to_owned()));
+        record.add("computer", Value::String("event-host".to_owned()));
+        record.add("data_type", Value::String("artifact-type".to_owned()));
+        record.add("ogre_md_id", Value::String("artifact-md-id".to_owned()));
+        record.add("data", Value::String("artifact-data-field".to_owned()));
+        let original = record.clone();
 
-        let mut metadata = Metadata::new("meta\"host\n".to_owned());
+        let mut metadata = Metadata::new("metadata\"host\n".to_owned());
         metadata.data_type = "events\\kind".to_owned();
         let mut buffer = String::new();
 
         json_serialise_analytics_record(
             &record,
+            "generated-id",
             &metadata,
-            "md-id",
+            "metadata-id",
             &mut buffer,
             &DateOutputCodec::Iso(),
             false,
         )
         .unwrap();
 
-        assert_eq!(
-            buffer,
-            "{\"event\":\"login\",\"nested\":{\"computer\":\"nested-host\",\"data_type\":\"nested-type\"},\"items\":[{\"computer\":\"array-host\",\"data_type\":\"array-type\"}],\"computer\":\"meta\\\"host\\n\",\"data_type\":\"events\\\\kind\",\"ogre_md_id\":\"md-id\"}"
-        );
-        assert_eq!(
-            record.get("computer"),
-            Some(&Value::String("input-host".to_owned()))
-        );
-        assert_eq!(
-            record.get("data_type"),
-            Some(&Value::String("input-type".to_owned()))
-        );
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed.as_object().unwrap().len(), 5);
+        assert_eq!(parsed["ogre_id"], "generated-id");
+        assert_eq!(parsed["computer"], "metadata\"host\n");
+        assert_eq!(parsed["data_type"], "events\\kind");
+        assert_eq!(parsed["ogre_md_id"], "metadata-id");
+        assert_eq!(parsed["data"]["event"], "login");
+        assert_eq!(parsed["data"]["ogre_id"], "artifact-id");
+        assert_eq!(parsed["data"]["computer"], "event-host");
+        assert_eq!(parsed["data"]["data_type"], "artifact-type");
+        assert_eq!(parsed["data"]["ogre_md_id"], "artifact-md-id");
+        assert_eq!(parsed["data"]["data"], "artifact-data-field");
+        assert_eq!(record, original);
     }
 
     #[test]
@@ -667,18 +659,21 @@ mod tests {
 
         json_serialise_analytics_record(
             &record,
+            "generated-id",
             &metadata,
-            "md-id",
+            "metadata-id",
             &mut buffer,
             &DateOutputCodec::Iso(),
             false,
         )
         .unwrap();
 
-        assert_eq!(
-            buffer,
-            "{\"computer\":\"\",\"data_type\":\"\",\"ogre_md_id\":\"md-id\"}"
-        );
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed["ogre_id"], "generated-id");
+        assert_eq!(parsed["computer"], "");
+        assert_eq!(parsed["data_type"], "");
+        assert_eq!(parsed["ogre_md_id"], "metadata-id");
+        assert_eq!(parsed["data"], serde_json::json!({}));
     }
 
     #[test]
@@ -1132,6 +1127,8 @@ mod tests {
 
         assert_eq!(data["computer"], "host-json-gz");
         assert_eq!(data["data_type"], "events");
+        assert_eq!(data["data"]["event"], "login");
+        assert!(data.get("event").is_none());
         assert_eq!(metadata["computer"], "host-json-gz");
         assert_eq!(metadata["data_type"], "events");
 

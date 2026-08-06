@@ -304,9 +304,6 @@ impl LineBuilder {
             let data_id = BASE64.encode(self.line_data.data_id_hasher.finalize().as_slice());
 
             self.line_data.data_id = Some(data_id.clone());
-            self.line_data
-                .data
-                .add(OUPUT_DATA_ID, Value::String(data_id.clone()));
 
             let mut hasher = Hasher::new();
             for timeline in &mut self.line_data.timeline {
@@ -1771,6 +1768,67 @@ mod tests {
         assert_eq!(
             line_builder.line_data.data.get("unmapped_date"),
             Some(&Value::Date(date))
+        );
+    }
+
+    #[test]
+    fn generated_data_id_stays_outside_record_and_links_timelines() {
+        let timeline_builder = TimeLineBuilder::new(
+            TimeLineType::Standard,
+            "timeline-type".to_owned(),
+            100,
+            None,
+            None,
+        );
+        let field_mapping = FieldMapping::new(
+            vec![Field::Single {
+                name: FieldName::new("when".into(), false, None, None, None),
+                parser: Parser::DateTime(DateInputCodec::Iso()),
+                default_value: None,
+            }],
+            None,
+        );
+        let mut builder = LineBuilder::new(
+            Metadata::new("host".into()),
+            Some(timeline_builder),
+            field_mapping,
+            true,
+            false,
+            true,
+        );
+        let mut record = Record::new();
+        record.add("ogre_id", Value::String("artifact-id".to_owned()));
+        record.add(
+            "when",
+            Value::Date(crate::parse_date("2026-08-06T12:00:00Z", &DateInputCodec::Iso()).unwrap()),
+        );
+
+        builder.build(&mut record).unwrap();
+
+        let generated = builder.line_data.data_id.as_deref().unwrap();
+        assert_ne!(generated, "artifact-id");
+        assert_eq!(
+            builder.line_data.data.get(OUPUT_DATA_ID),
+            Some(&Value::String("artifact-id".to_owned()))
+        );
+        assert_eq!(builder.line_data.timeline.len(), 1);
+        assert_eq!(
+            builder.line_data.timeline[0].data_id.as_deref(),
+            Some(generated)
+        );
+
+        let mut record_without_artifact_id = Record::new();
+        record_without_artifact_id.add(
+            "when",
+            Value::Date(crate::parse_date("2026-08-07T12:00:00Z", &DateInputCodec::Iso()).unwrap()),
+        );
+        builder.build(&mut record_without_artifact_id).unwrap();
+
+        assert!(!builder.line_data.data.contains_key(OUPUT_DATA_ID));
+        let generated = builder.line_data.data_id.as_deref().unwrap();
+        assert_eq!(
+            builder.line_data.timeline[0].data_id.as_deref(),
+            Some(generated)
         );
     }
 

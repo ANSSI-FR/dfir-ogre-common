@@ -392,7 +392,11 @@ mod tests {
         assert!(!metadata_id.is_empty());
         assert_eq!(data_row["computer"].as_str(), Some("analytics-test-host"));
         assert_eq!(data_row["data_type"].as_str(), Some("evtx"));
-        assert_eq!(data_row["system"]["computer"].as_str(), Some("MINWINPC"));
+        assert_eq!(
+            data_row["data"]["system"]["computer"].as_str(),
+            Some("MINWINPC")
+        );
+        assert!(data_row.get("system").is_none());
 
         let metadata_row = &metadata_rows[0];
         assert_eq!(metadata_row["id"].as_str(), Some(metadata_id));

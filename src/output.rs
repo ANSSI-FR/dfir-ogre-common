@@ -684,6 +684,9 @@ mod tests {
         assert_eq!(data["data_type"], "events");
         assert!(data["ogre_id"].as_str().unwrap().len() > 10);
         assert!(data["ogre_md_id"].as_str().unwrap().len() > 10);
+        assert_eq!(data.as_object().unwrap().len(), 5);
+        assert_eq!(data["data"]["event"], "login");
+        assert!(data.get("event").is_none());
         assert_eq!(metadata["computer"], "host-output");
         assert_eq!(metadata["data_type"], "events");
         assert_eq!(reports.len(), 2);
@@ -736,6 +739,8 @@ mod tests {
 
         assert_eq!(analytics["computer"], "host-output");
         assert_eq!(analytics["data_type"], "events");
+        assert_eq!(analytics["data"]["event"], "login");
+        assert!(analytics.get("event").is_none());
         assert!(standard.get("computer").is_none());
         assert!(standard.get("data_type").is_none());
         assert_eq!(standard["ogre_md"]["computer"], "host-output");
@@ -1050,6 +1055,9 @@ mod tests {
 
         assert_eq!(data["computer"], "metadata-host");
         assert_eq!(data["data_type"], "events");
+        assert_eq!(data["data"]["event"], "login");
+        assert_eq!(data["data"]["when"], "2026-08-06T12:00:00.000000+00:00");
+        assert!(data.get("event").is_none());
         assert_eq!(timeline["computer"], "metadata-host");
         assert_eq!(timeline["data_type"], "timeline-events");
         assert_eq!(timeline["data_id"], data["ogre_id"]);
