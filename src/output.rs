@@ -982,6 +982,32 @@ mod tests {
     }
 
     #[test]
+    fn invalid_analytics_undated_option_creates_no_output_folder() {
+        let output_folder = Path::new(".tmp").join("output_invalid_analytics_undated");
+        remove_dir_if_exists(&output_folder);
+        let mut output_conf = normalized_output_config(
+            "invalid_analytics_undated",
+            &output_folder,
+            "analytics_jsonl",
+        );
+        output_conf.timeline_include_undated = true;
+
+        let result = Output::new(
+            RunConfiguration::new(vec![output_conf], true, None),
+            mapped_plugin_config("events", event_field_mapping()),
+            Metadata::new("host-output".into()),
+            None,
+        );
+
+        let error = match result {
+            Ok(_) => panic!("invalid analytics configuration was accepted"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, Error::ConfigurationError(_)));
+        assert!(!output_folder.exists());
+    }
+
+    #[test]
     fn timeline_include_undated_is_applied_per_output() {
         let output_folder = test_output_folder("output_timeline_no_date");
         let mut plugin_config = mapped_plugin_config("events", event_field_mapping());

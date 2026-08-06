@@ -601,7 +601,7 @@ class OutputConfiguration:
             format: Primary serialization format, e.g. ``"json"`` or ``"csv"``. Defaults to ``"jsonl"``.
             date_format: Pattern used for serialising timestamps, e.g. ``"iso_utc"``. Defaults to ``"iso_utc"``.
             with_timeline: Include timeline information when ``True``. Defaults to ``False``.
-            timeline_include_undated: Emit a placeholder timeline entry with a null timestamp when no valid date was extracted. Only active when ``with_timeline`` is ``True``. Defaults to ``False``.
+            timeline_include_undated: Emit a placeholder timeline entry with a null timestamp when no valid date was extracted. Only active when ``with_timeline`` is ``True``. ``analytics_jsonl`` rejects this option when it is ``True``. Defaults to ``False``.
             include_empty: Emit empty fields when ``True``. Defaults to ``True``.
             params: Free-form key/value pairs for extra options. Defaults to ``{}``.
         """

@@ -106,7 +106,8 @@ impl OutputConfiguration {
     /// Python constructor for an output configuration.
     ///
     /// `timeline_include_undated` emits a null-timestamp placeholder when timeline extraction finds
-    /// no valid date. It is ignored unless `with_timeline` is enabled.
+    /// no valid date. It is ignored unless `with_timeline` is enabled. `analytics_jsonl` rejects
+    /// this option when it is true.
     fn py_new(
         base_file_name: String,
         output_folder: String,
@@ -180,6 +181,16 @@ impl RunConfiguration {
             return Err(Error::ConfigurationError(
                 "invalid run configuration, it requires at least one output configuration"
                     .to_string(),
+            ));
+        }
+
+        if self
+            .output
+            .iter()
+            .any(|output| output.format == "analytics_jsonl" && output.timeline_include_undated)
+        {
+            return Err(Error::ConfigurationError(
+                "'timeline_include_undated' is not supported with 'analytics_jsonl'".to_owned(),
             ));
         }
 
@@ -325,6 +336,56 @@ mod tests {
 
         assert!(matches!(error, Error::ConfigurationError(_)));
         assert!(error.to_string().contains("at least one output"));
+    }
+
+    #[test]
+    fn analytics_jsonl_rejects_timeline_include_undated_with_or_without_timeline() {
+        for with_timeline in [false, true] {
+            let mut output = OutputConfiguration::new(
+                "events".to_owned(),
+                ".tmp/analytics-invalid".to_owned(),
+                "file".to_owned(),
+                "analytics_jsonl".to_owned(),
+                "iso".to_owned(),
+                with_timeline,
+                true,
+                HashMap::new(),
+            );
+            output.timeline_include_undated = true;
+
+            let error = RunConfiguration::new(vec![output], true, None)
+                .validate()
+                .expect_err("analytics must reject undated timeline output");
+
+            match error {
+                Error::ConfigurationError(message) => assert_eq!(
+                    message,
+                    "'timeline_include_undated' is not supported with 'analytics_jsonl'"
+                ),
+                other => panic!("expected configuration error, got {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn normalized_jsonl_still_accepts_timeline_include_undated() {
+        let mut output = OutputConfiguration::new(
+            "events".to_owned(),
+            ".tmp/normalized-undated".to_owned(),
+            "file".to_owned(),
+            "normalized_jsonl".to_owned(),
+            "iso".to_owned(),
+            true,
+            true,
+            HashMap::new(),
+        );
+        output.timeline_include_undated = true;
+
+        assert!(
+            RunConfiguration::new(vec![output], true, None)
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]
