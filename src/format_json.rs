@@ -10,6 +10,19 @@ use crate::{
     timeline::TimelineSerializationContext,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum JsonMode {
+    Standard,
+    Normalized,
+    Analytics,
+}
+
+impl JsonMode {
+    fn uses_normalized_files(self) -> bool {
+        matches!(self, Self::Normalized | Self::Analytics)
+    }
+}
+
 enum JsonExtraField<'a> {
     Metadata(&'a MetadataSerialized),
     String(&'a str),
@@ -75,6 +88,7 @@ pub struct JsonFormatter {
     output_date_codec: DateOutputCodec,
     include_empty: bool,
     include_timeline: bool,
+    mode: JsonMode,
     pub file_report: FileReport,
     metadata_file_report: Option<FileReport>,
     timeline_file_report: Option<FileReport>,
@@ -108,7 +122,7 @@ impl JsonFormatter {
         include_timeline: bool,
         compression_level: u32,
         mut file_report: FileReport,
-        normalized: bool,
+        mode: JsonMode,
     ) -> Result<Self, Error> {
         let file_path = match output_type {
             OutputType::File => Path::new(&output_folder).join(format!("{file_name}.jsonl")),
@@ -129,7 +143,7 @@ impl JsonFormatter {
         };
 
         let (metadata_writer, metadata_file_report, timeline_writer, timeline_file_report) =
-            match normalized {
+            match mode.uses_normalized_files() {
                 true => {
                     let metadata_file_path = match output_type {
                         OutputType::File => Path::new(&output_folder).join("ogre_metadata.jsonl"),
@@ -197,6 +211,7 @@ impl JsonFormatter {
             metadata_serialized: None,
             include_empty,
             include_timeline,
+            mode,
             file_report,
             metadata_file_report,
             timeline_file_report,
@@ -274,6 +289,7 @@ impl JsonFormatter {
     }
 
     pub fn write_normalized(&mut self, line_builder: &LineBuilder) -> Result<(), Error> {
+        debug_assert!(self.mode.uses_normalized_files());
         let data = &line_builder.line_data;
         if self.include_timeline
             && let Some(timeline_writer) = &mut self.timeline_writer
@@ -427,7 +443,7 @@ mod tests {
             FileReport {
                 ..Default::default()
             },
-            false,
+            JsonMode::Standard,
         )
         .unwrap();
         let mut record = Record::new();
@@ -466,7 +482,7 @@ mod tests {
             FileReport {
                 ..Default::default()
             },
-            false,
+            JsonMode::Standard,
         )
         .unwrap();
         let mut metadata = Metadata::new("host-a".into());
@@ -539,7 +555,7 @@ mod tests {
             FileReport {
                 ..Default::default()
             },
-            true,
+            JsonMode::Normalized,
         )
         .unwrap();
         let mut record = Record::new();
@@ -625,7 +641,7 @@ mod tests {
             FileReport {
                 ..Default::default()
             },
-            true,
+            JsonMode::Normalized,
         )
         .unwrap();
         let mut record = Record::new();
@@ -694,7 +710,7 @@ mod tests {
             FileReport {
                 ..Default::default()
             },
-            false,
+            JsonMode::Standard,
         )
         .unwrap();
 
@@ -764,7 +780,7 @@ mod tests {
             FileReport {
                 ..Default::default()
             },
-            true,
+            JsonMode::Normalized,
         )
         .unwrap();
 
@@ -817,7 +833,7 @@ mod tests {
             FileReport {
                 ..Default::default()
             },
-            true,
+            JsonMode::Normalized,
         )
         .unwrap();
         let mut record = Record::new();
@@ -868,7 +884,7 @@ mod tests {
             FileReport {
                 ..Default::default()
             },
-            false,
+            JsonMode::Standard,
         )
         .unwrap();
         let mut record = Record::new();

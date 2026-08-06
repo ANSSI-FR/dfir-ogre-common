@@ -7,7 +7,7 @@ use crate::line_builder::LineBuilder;
 
 use crate::config_parser::RunConfiguration;
 use crate::format_csv::CsvFormatter;
-use crate::format_json::JsonFormatter;
+use crate::format_json::{JsonFormatter, JsonMode};
 use crate::output_writer::try_close_all;
 use crate::{FieldMapping, Metadata, Record};
 
@@ -56,6 +56,7 @@ impl OutputType {
 pub enum OutputFormat {
     Jsonl,
     NormalizedJsonl,
+    AnalyticsJsonl,
     Csv,
     NormalizedCsv,
 }
@@ -64,6 +65,7 @@ impl OutputFormat {
         match format {
             "jsonl" => Ok(OutputFormat::Jsonl),
             "normalized_jsonl" => Ok(OutputFormat::NormalizedJsonl),
+            "analytics_jsonl" => Ok(OutputFormat::AnalyticsJsonl),
             "csv" => Ok(OutputFormat::Csv),
             "normalized_csv" => Ok(OutputFormat::NormalizedCsv),
             _ => Err(Error::InvalidOutputFormat(format.to_owned())),
@@ -75,6 +77,7 @@ impl OutputFormat {
 enum OutputWriter {
     Jsonl(Arc<Mutex<JsonFormatter>>),
     NormalizedJsonl(Arc<Mutex<JsonFormatter>>),
+    AnalyticsJsonl(Arc<Mutex<JsonFormatter>>),
     Csv(Arc<Mutex<CsvFormatter>>),
     NormalizedCsv(Arc<Mutex<CsvFormatter>>),
 }
@@ -92,7 +95,7 @@ impl OutputWriter {
                 out.write(data)
             }
 
-            Self::NormalizedJsonl(json_output) => {
+            Self::NormalizedJsonl(json_output) | Self::AnalyticsJsonl(json_output) => {
                 let mut out = json_output.lock().expect("mutex lock panicked");
                 out.write_normalized(data)
             }
@@ -111,7 +114,7 @@ impl OutputWriter {
 
     pub fn write_metadata(&mut self, data: &LineBuilder) -> Result<(), Error> {
         match self {
-            Self::NormalizedJsonl(json_output) => {
+            Self::NormalizedJsonl(json_output) | Self::AnalyticsJsonl(json_output) => {
                 let mut out = json_output.lock().expect("mutex lock panicked");
                 out.write_metadata(data)
             }
@@ -129,11 +132,9 @@ impl OutputWriter {
     /// * A report for each file written by the output.
     pub fn result(&self) -> Vec<FileReport> {
         match self {
-            Self::Jsonl(json_output) => {
-                let out = json_output.lock().expect("mutex lock panicked");
-                out.reports()
-            }
-            Self::NormalizedJsonl(json_output) => {
+            Self::Jsonl(json_output)
+            | Self::NormalizedJsonl(json_output)
+            | Self::AnalyticsJsonl(json_output) => {
                 let out = json_output.lock().expect("mutex lock panicked");
                 out.reports()
             }
@@ -151,11 +152,9 @@ impl OutputWriter {
     /// Flushes buffers and closes the underlying destination, handling any I/O errors.
     pub fn close(&mut self) -> Result<(), Error> {
         match self {
-            Self::Jsonl(json_output) => {
-                let mut out = json_output.lock().expect("mutex lock panicked");
-                out.close()?;
-            }
-            Self::NormalizedJsonl(json_output) => {
+            Self::Jsonl(json_output)
+            | Self::NormalizedJsonl(json_output)
+            | Self::AnalyticsJsonl(json_output) => {
                 let mut out = json_output.lock().expect("mutex lock panicked");
                 out.close()?;
             }
@@ -244,7 +243,9 @@ impl Output {
 
             if matches!(
                 &output_format,
-                OutputFormat::NormalizedJsonl | OutputFormat::NormalizedCsv
+                OutputFormat::NormalizedJsonl
+                    | OutputFormat::AnalyticsJsonl
+                    | OutputFormat::NormalizedCsv
             ) {
                 compute_hash = true;
             }
@@ -295,7 +296,7 @@ impl Output {
                         output_conf.with_timeline,
                         compression_level,
                         file_report,
-                        false,
+                        JsonMode::Standard,
                     )?;
                     OutputWriter::Jsonl(Arc::new(Mutex::new(json_output)))
                 }
@@ -309,9 +310,23 @@ impl Output {
                         output_conf.with_timeline,
                         compression_level,
                         file_report,
-                        true,
+                        JsonMode::Normalized,
                     )?;
                     OutputWriter::NormalizedJsonl(Arc::new(Mutex::new(json_output)))
+                }
+                OutputFormat::AnalyticsJsonl => {
+                    let json_output = JsonFormatter::new(
+                        output_type,
+                        output_folder,
+                        &base_file_name,
+                        output_date_codec,
+                        output_conf.include_empty,
+                        output_conf.with_timeline,
+                        compression_level,
+                        file_report,
+                        JsonMode::Analytics,
+                    )?;
+                    OutputWriter::AnalyticsJsonl(Arc::new(Mutex::new(json_output)))
                 }
                 OutputFormat::Csv => {
                     let csv = CsvFormatter::new(
@@ -628,6 +643,53 @@ mod tests {
         let metadata_record = metadata_reader.records().next().unwrap().unwrap();
         assert_eq!(&metadata_record[0], "host-output");
         assert_eq!(&metadata_record[1], "events");
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
+    fn analytics_jsonl_uses_normalized_lifecycle() {
+        let output_folder = test_output_folder("output_analytics_lifecycle");
+        let output_conf =
+            normalized_output_config("analytics_lifecycle", &output_folder, "analytics_jsonl");
+        let mut output = Output::new(
+            RunConfiguration::new(vec![output_conf], true, None),
+            mapped_plugin_config("events", event_field_mapping()),
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+
+        output.write(&mut record).unwrap();
+        output.finalize().unwrap();
+        let reports = output.get_report().file_reports;
+        drop(output);
+
+        let data: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("analytics_lifecycle.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("ogre_metadata.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+
+        assert!(data["ogre_id"].as_str().unwrap().len() > 10);
+        assert!(data["ogre_md_id"].as_str().unwrap().len() > 10);
+        assert_eq!(metadata["computer"], "host-output");
+        assert_eq!(metadata["data_type"], "events");
+        assert_eq!(reports.len(), 2);
+        assert!(
+            reports
+                .iter()
+                .all(|report| report.format == "analytics_jsonl")
+        );
 
         remove_dir_if_exists(&output_folder);
     }
@@ -1016,6 +1078,7 @@ mod tests {
             OutputFormat::from_str("normalized_csv").unwrap(),
             OutputFormat::NormalizedCsv
         ));
+        assert!(OutputFormat::from_str("analytics_jsonl").is_ok());
     }
 
     #[test]
