@@ -58,6 +58,7 @@ pub(crate) struct TimelineSerializationContext<'a> {
     pub(crate) metadata: Option<&'a MetadataSerialized>,
     pub(crate) data: Option<&'a Record>,
     pub(crate) metadata_id: Option<&'a str>,
+    pub(crate) computer_override: Option<&'a str>,
 }
 
 impl TimeLine {
@@ -75,6 +76,7 @@ impl TimeLine {
                 metadata: self.metadata.as_ref(),
                 data: self.data.as_ref(),
                 metadata_id: self.metadata_id.as_deref(),
+                computer_override: None,
             },
         )
     }
@@ -90,7 +92,10 @@ impl TimeLine {
         let result = (|| {
             let mut object = JsonObjectWriter::new(buffer);
             object.optional_string_field("id", self.id.as_deref());
-            object.optional_string_field("computer", self.computer.as_deref());
+            object.optional_string_field(
+                "computer",
+                context.computer_override.or(self.computer.as_deref()),
+            );
             match self.timestamp.as_ref() {
                 Some(timestamp) => {
                     object.string_field("timestamp", &serialize_date(timestamp, date_codec));
@@ -156,6 +161,7 @@ impl TimeLine {
                 metadata: self.metadata.as_ref(),
                 data: self.data.as_ref(),
                 metadata_id: self.metadata_id.as_deref(),
+                computer_override: None,
             },
         )
     }
@@ -1509,6 +1515,28 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["metadata_id"], "formatter-md-id");
+    }
+
+    #[test]
+    fn timeline_json_context_computer_override_wins_without_mutation() {
+        let tl = timeline_for_serialization_tests();
+        let stored_computer = tl.computer.clone();
+        let mut json = String::new();
+
+        tl.json_serialise_with_context(
+            &mut json,
+            &DateOutputCodec::IsoUtc(),
+            false,
+            TimelineSerializationContext {
+                computer_override: Some("metadata\"host\n"),
+                ..TimelineSerializationContext::default()
+            },
+        )
+        .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["computer"], "metadata\"host\n");
+        assert_eq!(tl.computer, stored_computer);
     }
 
     #[test]

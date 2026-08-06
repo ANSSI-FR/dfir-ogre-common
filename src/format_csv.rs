@@ -234,6 +234,7 @@ impl CsvFormatter {
                         metadata: Some(&metadata),
                         data: Some(&data.data),
                         metadata_id: timeline.metadata_id.as_deref(),
+                        computer_override: None,
                     },
                 )?;
 
@@ -296,6 +297,7 @@ impl CsvFormatter {
                         metadata: timeline.metadata.as_ref(),
                         data: timeline.data.as_ref(),
                         metadata_id: Some(&line_builder.metadata_id),
+                        computer_override: None,
                     },
                 )?;
                 self.line_buffer.push('\n');

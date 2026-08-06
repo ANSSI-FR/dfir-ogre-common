@@ -889,6 +889,99 @@ mod tests {
     }
 
     #[test]
+    fn analytics_jsonl_enriches_main_and_timeline_rows() {
+        let output_folder = test_output_folder("output_analytics_timeline");
+        let event_field = Field::Single {
+            name: FieldName::new("event".to_owned(), false, None, None, None),
+            parser: Parser::String(),
+            default_value: None,
+        };
+        let timestamp_field = Field::Single {
+            name: FieldName::new("when".to_owned(), false, None, None, None),
+            parser: Parser::DateTime(DateInputCodec::Iso()),
+            default_value: None,
+        };
+        let mut plugin_config = mapped_plugin_config(
+            "events",
+            FieldMapping::new(vec![event_field, timestamp_field], None),
+        );
+        let mut timeline = TimeLineBuilder::new(
+            TimeLineType::Standard,
+            "timeline-events".to_owned(),
+            0,
+            None,
+            None,
+        );
+        timeline.add_description_ouput_path(vec!["event".to_owned()]);
+        plugin_config.data_type_configs[0].timeline = Some(timeline);
+
+        let output_conf = OutputConfiguration::new(
+            "analytics_timeline".to_owned(),
+            output_folder.display().to_string(),
+            "file".to_owned(),
+            "analytics_jsonl".to_owned(),
+            "iso".to_owned(),
+            true,
+            true,
+            HashMap::new(),
+        );
+        let mut output = Output::new(
+            RunConfiguration::new(vec![output_conf], true, None),
+            plugin_config,
+            Metadata::new("metadata-host".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+        record.add(
+            "when",
+            Value::Date(crate::parse_date("2026-08-06T12:00:00Z", &DateInputCodec::Iso()).unwrap()),
+        );
+
+        output.write(&mut record).unwrap();
+        output.finalize().unwrap();
+        let reports = output.get_report().file_reports;
+        drop(output);
+
+        let data: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("analytics_timeline.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let timeline: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("analytics_timeline.events.tl.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("ogre_metadata.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+
+        assert_eq!(data["computer"], "metadata-host");
+        assert_eq!(data["data_type"], "events");
+        assert_eq!(timeline["computer"], "metadata-host");
+        assert_eq!(timeline["data_type"], "timeline-events");
+        assert_eq!(timeline["data_id"], data["ogre_id"]);
+        assert_eq!(timeline["metadata_id"], data["ogre_md_id"]);
+        assert_eq!(metadata["computer"], "metadata-host");
+        assert_eq!(metadata["data_type"], "events");
+        assert_eq!(reports.len(), 3);
+        assert!(
+            reports
+                .iter()
+                .all(|report| report.format == "analytics_jsonl")
+        );
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
     fn timeline_include_undated_is_applied_per_output() {
         let output_folder = test_output_folder("output_timeline_no_date");
         let mut plugin_config = mapped_plugin_config("events", event_field_mapping());

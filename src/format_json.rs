@@ -286,6 +286,7 @@ impl JsonFormatter {
                         metadata: Some(&metadata),
                         data: Some(&data.data),
                         metadata_id: timeline.metadata_id.as_deref(),
+                        computer_override: None,
                     },
                 )?;
                 self.line_buffer.push('\n');
@@ -345,6 +346,10 @@ impl JsonFormatter {
                         metadata: timeline.metadata.as_ref(),
                         data: timeline.data.as_ref(),
                         metadata_id: Some(&line_builder.metadata_id),
+                        computer_override: match self.mode {
+                            JsonMode::Analytics => Some(line_builder.metadata.computer.as_str()),
+                            JsonMode::Standard | JsonMode::Normalized => None,
+                        },
                     },
                 )?;
                 self.line_buffer.push('\n');
@@ -923,6 +928,71 @@ mod tests {
         assert_eq!(parsed["metadata_id"], line_builder.metadata_id);
 
         remove_dir_if_exists(Path::new(output_folder));
+    }
+
+    #[test]
+    fn analytics_timeline_writer_overrides_stale_computer_from_metadata() {
+        let output_folder = Path::new(TMP_FOLDER).join("test_analytics_timeline_override_dir");
+        remove_dir_if_exists(&output_folder);
+        std::fs::create_dir_all(&output_folder).unwrap();
+        let output_folder_str = output_folder.to_str().unwrap();
+        let timeline_path = output_folder.join("analytics.events.tl.jsonl");
+
+        let timeline_builder = TimeLineBuilder::new(
+            TimeLineType::Standard,
+            "timeline-events".to_owned(),
+            100,
+            None,
+            None,
+        );
+        let mut metadata = Metadata::new("metadata-host".into());
+        metadata.data_type = "events".into();
+        let mut line_builder = LineBuilder::new(
+            metadata,
+            Some(timeline_builder),
+            timeline_field_mapping_for_two_dates(),
+            true,
+            false,
+            true,
+        );
+        let mut record = Record::new();
+        record.add(
+            "when_a",
+            Value::Date(crate::parse_date("2026-08-06T12:00:00Z", &DateInputCodec::Iso()).unwrap()),
+        );
+        record.add("message", Value::String("login".to_owned()));
+        line_builder.build(&mut record).unwrap();
+        line_builder.line_data.timeline[0].computer = Some("stale-host".to_owned());
+
+        let mut output = JsonFormatter::new(
+            OutputType::File,
+            output_folder_str,
+            "analytics.events",
+            DateOutputCodec::Iso(),
+            false,
+            true,
+            7,
+            FileReport {
+                format: "analytics_jsonl".to_owned(),
+                with_timeline: true,
+                ..Default::default()
+            },
+            JsonMode::Analytics,
+        )
+        .unwrap();
+
+        output.write_normalized(&line_builder).unwrap();
+        output.close().unwrap();
+
+        let timeline: serde_json::Value =
+            serde_json::from_str(fs::read_to_string(&timeline_path).unwrap().trim()).unwrap();
+        assert_eq!(timeline["computer"], "metadata-host");
+        assert_eq!(
+            line_builder.line_data.timeline[0].computer.as_deref(),
+            Some("stale-host")
+        );
+
+        remove_dir_if_exists(&output_folder);
     }
 
     #[test]
