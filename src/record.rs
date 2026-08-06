@@ -1,4 +1,4 @@
-use crate::{Error, Value, date_util::DateOutputCodec, hash_util};
+use crate::{Error, Value, date_util::DateOutputCodec, hash_util, serialise::JsonObjectWriter};
 use blake3::Hasher;
 
 use indexmap::IndexMap;
@@ -85,6 +85,63 @@ impl Record {
     ) -> Result<(), Error> {
         Value::json_serialise_record(self, buffer, date_codec, include_empty)
     }
+
+    pub(crate) fn json_serialise_fields_with_string_override(
+        &self,
+        object: &mut JsonObjectWriter<'_>,
+        date_codec: &DateOutputCodec,
+        include_empty: bool,
+        string_override: Option<(&str, &str)>,
+    ) -> Result<(), Error> {
+        let mut override_written = false;
+        for (key, value) in self.iter() {
+            if let Some((override_key, override_value)) = string_override
+                && key == override_key
+            {
+                object.string_field(key, override_value);
+                override_written = true;
+                continue;
+            }
+
+            if include_empty || !matches!(value, Value::Null()) {
+                object.try_field_raw(key, |buffer| {
+                    Value::json_serialise_value(value, buffer, date_codec, include_empty)
+                })?;
+            }
+        }
+
+        if let Some((override_key, override_value)) = string_override
+            && !override_written
+        {
+            object.string_field(override_key, override_value);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn json_serialise_with_string_override(
+        &self,
+        buffer: &mut String,
+        date_codec: &DateOutputCodec,
+        include_empty: bool,
+        string_override: Option<(&str, &str)>,
+    ) -> Result<(), Error> {
+        let start_len = buffer.len();
+        let result = (|| {
+            let mut object = JsonObjectWriter::new(buffer);
+            self.json_serialise_fields_with_string_override(
+                &mut object,
+                date_codec,
+                include_empty,
+                string_override,
+            )?;
+            object.finish();
+            Ok(())
+        })();
+        if result.is_err() {
+            buffer.truncate(start_len);
+        }
+        result
+    }
 }
 
 #[pymethods]
@@ -145,6 +202,33 @@ impl Display for Record {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_string_override_replaces_only_the_root_field_without_mutation() {
+        let mut nested = Record::new();
+        nested.add("ogre_id", Value::String("nested-source".to_owned()));
+
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+        record.add("ogre_id", Value::String("root-source".to_owned()));
+        record.add("nested", Value::Object(nested));
+        let original = record.clone();
+        let mut buffer = String::new();
+
+        record
+            .json_serialise_with_string_override(
+                &mut buffer,
+                &DateOutputCodec::Iso(),
+                false,
+                Some(("ogre_id", "generated-id")),
+            )
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed["ogre_id"], "generated-id");
+        assert_eq!(parsed["nested"]["ogre_id"], "nested-source");
+        assert_eq!(record, original);
+    }
 
     #[test]
     fn record_add_and_get() {

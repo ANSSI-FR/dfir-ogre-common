@@ -55,6 +55,7 @@ impl CsvExtraField<'_> {
 fn csv_serialise_record_with_extra_field(
     record: &Record,
     record_fields: Option<&[String]>,
+    data_id_override: Option<&str>,
     extra_value: CsvExtraField<'_>,
     buffer: &mut String,
     date_codec: &DateOutputCodec,
@@ -62,15 +63,32 @@ fn csv_serialise_record_with_extra_field(
     let mut row = CsvRowWriter::new(buffer);
     if let Some(record_fields) = record_fields {
         for field in record_fields {
-            if let Some(value) = record.get(field) {
+            if field == OUPUT_DATA_ID
+                && let Some(data_id) = data_id_override
+            {
+                row.quoted_field(data_id);
+            } else if let Some(value) = record.get(field) {
                 row.try_raw_field(|buffer| Value::csv_serialise_value(value, buffer, date_codec))?;
             } else {
                 row.empty_field();
             }
         }
     } else {
-        for (_, value) in record.iter() {
-            row.try_raw_field(|buffer| Value::csv_serialise_value(value, buffer, date_codec))?;
+        let mut override_written = false;
+        for (key, value) in record.iter() {
+            if key == OUPUT_DATA_ID
+                && let Some(data_id) = data_id_override
+            {
+                row.quoted_field(data_id);
+                override_written = true;
+            } else {
+                row.try_raw_field(|buffer| Value::csv_serialise_value(value, buffer, date_codec))?;
+            }
+        }
+        if let Some(data_id) = data_id_override
+            && !override_written
+        {
+            row.quoted_field(data_id);
         }
     }
     extra_value.write_to_row(&mut row);
@@ -235,6 +253,7 @@ impl CsvFormatter {
                         data: Some(&data.data),
                         metadata_id: timeline.metadata_id.as_deref(),
                         computer_override: None,
+                        data_id_override: data.data_id.as_deref(),
                     },
                 )?;
 
@@ -249,6 +268,7 @@ impl CsvFormatter {
             csv_serialise_record_with_extra_field(
                 &data.data,
                 self.record_fields.as_deref(),
+                data.data_id.as_deref(),
                 CsvExtraField::Metadata(&metadata),
                 &mut self.line_buffer,
                 &self.output_date_codec,
@@ -298,6 +318,7 @@ impl CsvFormatter {
                         data: timeline.data.as_ref(),
                         metadata_id: Some(&line_builder.metadata_id),
                         computer_override: None,
+                        data_id_override: None,
                     },
                 )?;
                 self.line_buffer.push('\n');
@@ -313,6 +334,7 @@ impl CsvFormatter {
         csv_serialise_record_with_extra_field(
             &data.data,
             self.record_fields.as_deref(),
+            data.data_id.as_deref(),
             CsvExtraField::String(&line_builder.metadata_id),
             &mut self.line_buffer,
             &self.output_date_codec,
@@ -691,6 +713,7 @@ mod tests {
         csv_serialise_record_with_extra_field(
             &record,
             None,
+            None,
             CsvExtraField::Metadata(&metadata),
             &mut buffer,
             &DateOutputCodec::Iso(),
@@ -705,6 +728,36 @@ mod tests {
         assert_eq!(&parsed[0], "Hello");
         assert_eq!(&parsed[1], "{\"computer\":\"test\",\"data_type\":\"\"}");
         assert!(!record.contains_key(OUTPUT_METADATA_FIELD));
+    }
+
+    #[test]
+    fn csv_record_serializer_projects_generated_data_id_column() {
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+        let original = record.clone();
+        let record_fields = vec!["event".to_owned(), OUPUT_DATA_ID.to_owned()];
+        let mut buffer = String::new();
+
+        csv_serialise_record_with_extra_field(
+            &record,
+            Some(&record_fields),
+            Some("generated-id"),
+            CsvExtraField::String("metadata-id"),
+            &mut buffer,
+            &DateOutputCodec::Iso(),
+        )
+        .unwrap();
+
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(buffer.as_bytes());
+        let parsed = reader.records().next().unwrap().unwrap();
+        assert_eq!(
+            parsed.iter().collect::<Vec<_>>(),
+            vec!["login", "generated-id", "metadata-id"]
+        );
+        assert_eq!(record, original);
     }
 
     #[test]

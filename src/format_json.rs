@@ -2,7 +2,7 @@ use std::{fs::OpenOptions, path::Path, sync::Arc};
 
 use crate::{
     DateOutputCodec, Error, FileReport, Metadata, Record, Value, escape_special_chars,
-    line_builder::{LineBuilder, OUTPUT_METADATA_FIELD, OUTPUT_METADATA_ID_FIELD},
+    line_builder::{LineBuilder, OUPUT_DATA_ID, OUTPUT_METADATA_FIELD, OUTPUT_METADATA_ID_FIELD},
     metadata::MetadataSerialized,
     output::OutputType,
     output_writer::{FileWriter, GzipWriter, Writer, try_close_all},
@@ -46,6 +46,7 @@ const ANALYTICS_DATA_TYPE_FIELD: &str = "data_type";
 
 fn json_serialise_record_with_extra_field(
     record: &Record,
+    data_id_override: Option<&str>,
     extra_key: &str,
     extra_value: JsonExtraField<'_>,
     buffer: &mut String,
@@ -55,14 +56,12 @@ fn json_serialise_record_with_extra_field(
     let start_len = buffer.len();
     let result = (|| {
         let mut object = JsonObjectWriter::new(buffer);
-        for (key, value) in record.iter() {
-            let should_emit = include_empty || !matches!(value, Value::Null());
-            if should_emit {
-                object.try_field_raw(key, |buffer| {
-                    Value::json_serialise_value(value, buffer, date_codec, include_empty)
-                })?;
-            }
-        }
+        record.json_serialise_fields_with_string_override(
+            &mut object,
+            date_codec,
+            include_empty,
+            data_id_override.map(|data_id| (OUPUT_DATA_ID, data_id)),
+        )?;
         object.field_raw(extra_key, |buffer| extra_value.json_serialise(buffer));
         object.finish();
         Ok(())
@@ -287,6 +286,7 @@ impl JsonFormatter {
                         data: Some(&data.data),
                         metadata_id: timeline.metadata_id.as_deref(),
                         computer_override: None,
+                        data_id_override: data.data_id.as_deref(),
                     },
                 )?;
                 self.line_buffer.push('\n');
@@ -298,6 +298,7 @@ impl JsonFormatter {
             self.line_buffer.clear();
             json_serialise_record_with_extra_field(
                 &data.data,
+                data.data_id.as_deref(),
                 OUTPUT_METADATA_FIELD,
                 JsonExtraField::Metadata(&metadata),
                 &mut self.line_buffer,
@@ -350,6 +351,7 @@ impl JsonFormatter {
                             JsonMode::Analytics => Some(line_builder.metadata.computer.as_str()),
                             JsonMode::Standard | JsonMode::Normalized => None,
                         },
+                        data_id_override: None,
                     },
                 )?;
                 self.line_buffer.push('\n');
@@ -374,6 +376,7 @@ impl JsonFormatter {
         } else {
             json_serialise_record_with_extra_field(
                 &data.data,
+                data.data_id.as_deref(),
                 OUTPUT_METADATA_ID_FIELD,
                 JsonExtraField::String(&line_builder.metadata_id),
                 &mut self.line_buffer,
@@ -567,6 +570,7 @@ mod tests {
 
         json_serialise_record_with_extra_field(
             &record,
+            None,
             OUTPUT_METADATA_FIELD,
             JsonExtraField::Metadata(&metadata),
             &mut buffer,
@@ -580,6 +584,31 @@ mod tests {
             buffer
         );
         assert!(!record.contains_key(OUTPUT_METADATA_FIELD));
+    }
+
+    #[test]
+    fn record_extra_field_serializer_projects_generated_data_id() {
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+        let original = record.clone();
+        let mut buffer = String::new();
+
+        json_serialise_record_with_extra_field(
+            &record,
+            Some("generated-id"),
+            OUTPUT_METADATA_ID_FIELD,
+            JsonExtraField::String("metadata-id"),
+            &mut buffer,
+            &DateOutputCodec::Iso(),
+            false,
+        )
+        .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
+        assert_eq!(parsed["event"], "login");
+        assert_eq!(parsed[OUPUT_DATA_ID], "generated-id");
+        assert_eq!(parsed[OUTPUT_METADATA_ID_FIELD], "metadata-id");
+        assert_eq!(record, original);
     }
 
     #[test]

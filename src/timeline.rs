@@ -16,6 +16,7 @@ use crate::{
     errors::Error,
     format_csv::CSV_DELIMITER,
     hash_util,
+    line_builder::OUPUT_DATA_ID,
     metadata::MetadataSerialized,
     serialise::{CsvRowWriter, JsonObjectWriter},
     serialize_date,
@@ -59,6 +60,7 @@ pub(crate) struct TimelineSerializationContext<'a> {
     pub(crate) data: Option<&'a Record>,
     pub(crate) metadata_id: Option<&'a str>,
     pub(crate) computer_override: Option<&'a str>,
+    pub(crate) data_id_override: Option<&'a str>,
 }
 
 impl TimeLine {
@@ -77,6 +79,7 @@ impl TimeLine {
                 data: self.data.as_ref(),
                 metadata_id: self.metadata_id.as_deref(),
                 computer_override: None,
+                data_id_override: None,
             },
         )
     }
@@ -114,7 +117,14 @@ impl TimeLine {
             object.optional_string_field("data_id", self.data_id.as_deref());
             if let Some(data) = context.data {
                 object.try_field_raw("data", |buffer| {
-                    data.json_serialise(buffer, date_codec, include_empty)
+                    data.json_serialise_with_string_override(
+                        buffer,
+                        date_codec,
+                        include_empty,
+                        context
+                            .data_id_override
+                            .map(|data_id| (OUPUT_DATA_ID, data_id)),
+                    )
                 })?;
             }
             object.finish();
@@ -162,6 +172,7 @@ impl TimeLine {
                 data: self.data.as_ref(),
                 metadata_id: self.metadata_id.as_deref(),
                 computer_override: None,
+                data_id_override: None,
             },
         )
     }
@@ -198,7 +209,14 @@ impl TimeLine {
                 row.quoted_field(context.metadata.map(|m| m.0.as_str()).unwrap_or_default());
                 if let Some(data) = context.data {
                     row.try_quoted_field(|field| {
-                        data.json_serialise(field, date_codec, include_empty)
+                        data.json_serialise_with_string_override(
+                            field,
+                            date_codec,
+                            include_empty,
+                            context
+                                .data_id_override
+                                .map(|data_id| (OUPUT_DATA_ID, data_id)),
+                        )
                     })?;
                 } else {
                     row.empty_field();
@@ -1537,6 +1555,33 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["computer"], "metadata\"host\n");
         assert_eq!(tl.computer, stored_computer);
+    }
+
+    #[test]
+    fn timeline_json_context_projects_generated_id_into_nested_data() {
+        let mut tl = timeline_for_serialization_tests();
+        tl.data
+            .as_mut()
+            .unwrap()
+            .add("ogre_id", Value::String("artifact-provided-id".to_owned()));
+        let original = tl.data.clone();
+        let mut json = String::new();
+
+        tl.json_serialise_with_context(
+            &mut json,
+            &DateOutputCodec::IsoUtc(),
+            false,
+            TimelineSerializationContext {
+                data: tl.data.as_ref(),
+                data_id_override: Some("generated-id"),
+                ..TimelineSerializationContext::default()
+            },
+        )
+        .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["data"]["ogre_id"], "generated-id");
+        assert_eq!(tl.data, original);
     }
 
     #[test]

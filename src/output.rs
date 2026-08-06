@@ -745,6 +745,91 @@ mod tests {
     }
 
     #[test]
+    fn mixed_formats_preserve_existing_id_projection() {
+        let output_folder = test_output_folder("output_mixed_id_projection");
+        let standard_csv = OutputConfiguration::new(
+            "standard_csv".to_owned(),
+            output_folder.display().to_string(),
+            "file".to_owned(),
+            "csv".to_owned(),
+            "iso".to_owned(),
+            false,
+            true,
+            HashMap::new(),
+        );
+        let run_config = RunConfiguration::new(
+            vec![
+                json_output_config("standard_json", &output_folder, HashMap::new()),
+                standard_csv,
+                normalized_output_config("normalized_json", &output_folder, "normalized_jsonl"),
+                normalized_output_config("normalized_csv", &output_folder, "normalized_csv"),
+            ],
+            true,
+            None,
+        );
+        let mut output = Output::new(
+            run_config,
+            mapped_plugin_config("events", event_field_mapping()),
+            Metadata::new("host-output".into()),
+            None,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("event", Value::String("login".to_owned()));
+
+        output.write(&mut record).unwrap();
+        output.finalize().unwrap();
+        drop(output);
+
+        let standard_json: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("standard_json.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let normalized_json: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("normalized_json.events.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+
+        assert_eq!(standard_json["event"], "login");
+        assert_eq!(standard_json["ogre_id"], normalized_json["ogre_id"]);
+        assert!(standard_json.get("ogre_md").is_some());
+        assert!(normalized_json["ogre_md_id"].as_str().unwrap().len() > 10);
+
+        let standard_csv =
+            fs::read_to_string(output_folder.join("standard_csv.events.csv")).unwrap();
+        let mut standard_csv_reader = csv::ReaderBuilder::new()
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(standard_csv.as_bytes());
+        let standard_csv_headers = standard_csv_reader.headers().unwrap().clone();
+        assert_eq!(
+            standard_csv_headers.iter().collect::<Vec<_>>(),
+            vec!["event", "ogre_md"]
+        );
+
+        let normalized_csv =
+            fs::read_to_string(output_folder.join("normalized_csv.events.csv")).unwrap();
+        let mut normalized_csv_reader = csv::ReaderBuilder::new()
+            .delimiter(CSV_DELIMITER as u8)
+            .from_reader(normalized_csv.as_bytes());
+        let normalized_csv_headers = normalized_csv_reader.headers().unwrap().clone();
+        assert_eq!(
+            normalized_csv_headers.iter().collect::<Vec<_>>(),
+            vec!["event", "ogre_id", "ogre_md_id"]
+        );
+        let normalized_csv_row = normalized_csv_reader.records().next().unwrap().unwrap();
+        assert_eq!(
+            &normalized_csv_row[1],
+            normalized_json["ogre_id"].as_str().unwrap()
+        );
+
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
     fn mapped_null_object_is_preserved_for_include_empty_json_and_csv() {
         let output_folder = test_output_folder("output_mapped_null_object");
         let base_file_name = "mapped_null";
