@@ -25,12 +25,16 @@ The three row types form these logical relationships:
 | From | To | Meaning |
 | --- | --- | --- |
 | `data.ogre_md_id` | `metadata.id` | Metadata for the artifact row |
-| `timeline.data_id` | `data.ogre_id` | Artifact row that produced the timeline row |
+| (`timeline.data_id`, `timeline.metadata_id`) | (`data.ogre_id`, `data.ogre_md_id`) | Artifact row that produced the timeline row |
 | `timeline.metadata_id` | `metadata.id` | Metadata for the timeline row |
 
-One data row may produce zero, one, or several timeline rows. IDs should be
-stored as opaque `String` values. ClickHouse primary and sorting keys do not
-enforce uniqueness, so ingestion must choose its own replay/deduplication policy.
+One data row may produce zero, one, or several timeline rows. Treat
+(`ogre_id`, `ogre_md_id`) as the data-row identity when joining: `ogre_id`
+includes the record content plus selected source fields, but not every metadata
+field, so distinct metadata rows can share it. IDs should be stored as opaque
+`String` values. ClickHouse primary and sorting keys do not enforce uniqueness,
+so ingestion must choose its own replay/deduplication policy using the composite
+identity where appropriate.
 
 ## Main data rows
 
@@ -39,8 +43,8 @@ mapping:
 
 | Field | JSON type | Contract |
 | --- | --- | --- |
-| `ogre_id` | string | Stable data-row identifier used by `timeline.data_id` |
-| `ogre_md_id` | string | Metadata identifier used by `metadata.id` |
+| `ogre_id` | string | Data-content identifier used with `ogre_md_id` for timeline joins |
+| `ogre_md_id` | string | Metadata identifier used by `metadata.id` and in the composite data identity |
 | `computer` | string | Always emitted from `Metadata.computer` |
 | `data_type` | string | Always emitted from `Metadata.data_type` |
 | all other fields | any JSON value | Artifact-specific payload |
@@ -87,8 +91,8 @@ Optional metadata fields are omitted rather than emitted as `null`.
 | `related_user` | string | Related user, possibly empty |
 | `description` | string | Human-readable description, possibly empty |
 | `additional_description` | string | Additional description, possibly empty |
-| `metadata_id` | string | Joins to `metadata.id` |
-| `data_id` | string | Joins to `data.ogre_id` |
+| `metadata_id` | string | Joins to `metadata.id` and, with `data_id`, to `data.ogre_md_id` |
+| `data_id` | string | Joins to `data.ogre_id` together with `metadata_id` |
 
 Timeline `data_type` is deliberately independent of the main row's `data_type`.
 For example, a main `events` row may produce a `timeline-events` row. Do not use
@@ -127,7 +131,7 @@ CREATE TABLE analytics_data
     data_type String MATERIALIZED getSubcolumn(payload, 'data_type')
 )
 ENGINE = MergeTree
-ORDER BY (data_type, computer, ogre_id);
+ORDER BY (data_type, computer, ogre_id, ogre_md_id);
 ```
 
 Load each source line as one JSON object into `payload` with ClickHouse's
@@ -170,7 +174,7 @@ CREATE TABLE analytics_timeline
     data_id String
 )
 ENGINE = MergeTree
-ORDER BY (data_id, id);
+ORDER BY (data_id, metadata_id, id);
 ```
 
 Use ClickHouse's best-effort datetime input mode for the ISO-8601 strings when
@@ -215,7 +219,9 @@ Timeline-to-data lookup then uses the materialized identifiers:
 ```sql
 SELECT t.*, d.payload, m.original_filename
 FROM analytics_timeline AS t
-LEFT JOIN analytics_data AS d ON d.ogre_id = t.data_id
+LEFT JOIN analytics_data AS d
+    ON d.ogre_id = t.data_id
+   AND d.ogre_md_id = t.metadata_id
 LEFT JOIN analytics_metadata AS m ON m.id = t.metadata_id;
 ```
 
