@@ -102,10 +102,10 @@ the source main-row envelope.
 The exact logical relationships are:
 
 ```text
-analytics_data.ogre_md_id -> analytics_metadata.id
-analytics_timeline.metadata_id -> analytics_metadata.id
-(analytics_timeline.data_type, analytics_timeline.computer, analytics_timeline.data_id)
-    -> (analytics_data.data_type, analytics_data.computer, analytics_data.ogre_id)
+data.ogre_md_id -> metadata.id
+timeline.metadata_id -> metadata.id
+(timeline.data_type, timeline.computer, timeline.data_id)
+    -> (data.data_type, data.computer, data.ogre_id)
 ```
 
 One data row may produce zero, one, or several timeline rows. IDs are opaque
@@ -120,7 +120,7 @@ format. The outer envelope becomes ordinary columns, and only the nested `data`
 object is stored in the native JSON column.
 
 ```sql
-CREATE TABLE analytics_data
+CREATE TABLE data
 (
     ogre_id String,
     computer String,
@@ -135,7 +135,7 @@ ORDER BY (data_type, computer, ogre_id);
 The metadata sidecar can be loaded into this table:
 
 ```sql
-CREATE TABLE analytics_metadata
+CREATE TABLE metadata
 (
     id String,
     computer String,
@@ -159,7 +159,7 @@ Analytics timeline timestamps are guaranteed to be present, so the timeline
 table uses a non-nullable timestamp:
 
 ```sql
-CREATE TABLE analytics_timeline
+CREATE TABLE timeline
 (
     id String,
     computer String,
@@ -179,13 +179,13 @@ ORDER BY (computer, data_type, timestamp, data_id, id);
 For direct ingestion, for example:
 
 ```sql
-INSERT INTO analytics_data FORMAT JSONEachRow
+INSERT INTO data FORMAT JSONEachRow
 -- stream <base>.<data_type>.jsonl here
 
-INSERT INTO analytics_metadata FORMAT JSONEachRow
+INSERT INTO metadata FORMAT JSONEachRow
 -- stream ogre_metadata.jsonl here
 
-INSERT INTO analytics_timeline FORMAT JSONEachRow
+INSERT INTO timeline FORMAT JSONEachRow
 -- stream <base>.<data_type>.tl.jsonl here
 ```
 
@@ -202,7 +202,7 @@ artifact family while preserving the common join columns:
 ```sql
 CREATE VIEW analytics_data_evtx AS
 SELECT ogre_id, ogre_md_id, computer, data_type, data
-FROM analytics_data
+FROM data
 WHERE data_type = 'evtx';
 ```
 
@@ -216,7 +216,7 @@ SELECT
     ogre_md_id,
     computer,
     data.system.computer.:String AS event_computer
-FROM analytics_data
+FROM data
 WHERE data_type = 'evtx';
 ```
 
@@ -227,12 +227,12 @@ data ID. Do not add a metadata-ID predicate to that join:
 
 ```sql
 SELECT t.*, d.data, m.original_filename
-FROM analytics_timeline AS t
-LEFT JOIN analytics_data AS d
+FROM timeline AS t
+LEFT JOIN data AS d
     ON d.data_type = t.data_type
    AND d.computer = t.computer
    AND d.ogre_id = t.data_id
-LEFT JOIN analytics_metadata AS m
+LEFT JOIN metadata AS m
     ON m.id = t.metadata_id;
 ```
 
