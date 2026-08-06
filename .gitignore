@@ -84,4 +84,5 @@ docs/_build/
 /test_data/leveldb/LOG*
 
 AGENTS.md
-/docs
+
+docs/
