@@ -259,6 +259,14 @@ class FieldParserTree:
         """Retrieve the output name for this 'FieldParserTree'"""
         ...
 
+    def set_field_value(self, input_name: str, value: Value, record: Record) -> None:
+        """Store a typed value using configured aliases and container validation.
+
+        Unmapped values retain their input name. Object and array mappings
+        require a matching value type or null, just as for native parsers.
+        """
+        ...
+
     def get_parser(self, input_name: str) -> Optional[FieldParser]:
         """Retrieves a parser for a specific field name.
 
