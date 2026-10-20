@@ -618,6 +618,7 @@ mod tests {
             serde_json::from_str(fs::read_to_string(&json_metadata_path).unwrap().trim()).unwrap();
         assert_eq!(json_metadata["computer"], "host-output");
         assert_eq!(json_metadata["data_type"], "events");
+        assert_eq!(json_metadata["id"], json_data["ogre_md_id"]);
 
         let csv_data_path = output_folder.join("dispatch.events.csv");
         let csv_data = fs::read_to_string(&csv_data_path).unwrap();
@@ -633,6 +634,7 @@ mod tests {
         assert_eq!(&csv_record[0], "login");
         assert!(csv_record[1].len() > 10);
         assert!(csv_record[2].len() > 10);
+        assert_eq!(json_data["ogre_md_id"], &csv_record[2]);
         assert!(!csv_record.iter().any(|value| value == "json-only"));
 
         let csv_metadata_path = output_folder.join("ogre_metadata.csv");
@@ -643,6 +645,8 @@ mod tests {
         let metadata_record = metadata_reader.records().next().unwrap().unwrap();
         assert_eq!(&metadata_record[0], "host-output");
         assert_eq!(&metadata_record[1], "events");
+        assert_eq!(&metadata_record[2], &csv_record[2]);
+        assert_eq!(json_metadata["id"], &metadata_record[2]);
 
         remove_dir_if_exists(&output_folder);
     }
@@ -967,10 +971,18 @@ mod tests {
                 .trim(),
         )
         .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(
+            fs::read_to_string(output_folder.join("ogre_metadata.jsonl"))
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
 
         let data_id = data["ogre_id"].as_str().expect("normalized data id");
         let metadata_id = data["ogre_md_id"].as_str().expect("normalized metadata id");
         assert!(data_id.len() > 10);
+        assert!(metadata_id.len() > 10);
+        assert_eq!(metadata["id"], metadata_id);
         assert_eq!(timeline["data_id"], data_id);
         assert_eq!(timeline["metadata_id"], metadata_id);
 
