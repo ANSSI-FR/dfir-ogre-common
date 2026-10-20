@@ -169,13 +169,13 @@ impl SrumParser {
                 match self.db.table_by_name(srum_table.id) {
                     Ok(table) => {
                         if let Err(e) = self.parse_table(&table, output, &data_mapping) {
-                            let error = format!("SRUM Table:'{}', Error: {e}", &srum_table.name,);
+                            let error = format!("SRUM Table:'{}', Error: {e}", srum_table.name);
                             warn!("{error}");
                             run_report.add_error(error);
                         }
                     }
                     Err(e) => {
-                        let error = format!("SRUM Table:'{}', Error: {e}", &srum_table.name,);
+                        let error = format!("SRUM Table:'{}', Error: {e}", srum_table.name);
                         warn!("{error}");
                         // Missing tables are expected and are not reported as errors.
                     }

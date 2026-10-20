@@ -438,9 +438,7 @@ impl MultiInputGroupState {
     }
 
     fn clear(&mut self) {
-        for value in &mut self.values {
-            *value = None;
-        }
+        self.values.fill(None);
         self.seen = 0;
     }
 }

@@ -677,7 +677,7 @@ where
 fn string_value(value: String, truncate_after: usize) -> Value {
     if truncate_after > 0 && value.len() > truncate_after {
         let sub: String = value.chars().take(truncate_after).collect();
-        Value::String(format!("{}[..]", (&sub)))
+        Value::String(format!("{sub}[..]"))
     } else {
         Value::String(value)
     }

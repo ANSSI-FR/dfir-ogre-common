@@ -500,8 +500,8 @@ impl TimestampMeaning {
                 }
             }
 
-            let si_part = format!["$SI:{}", &macb_desc[0..4].iter().collect::<String>()];
-            let fn_part = format!["$FN:{}", &macb_desc[4..8].iter().collect::<String>()];
+            let si_part = format!("$SI:{}", macb_desc[0..4].iter().collect::<String>());
+            let fn_part = format!("$FN:{}", macb_desc[4..8].iter().collect::<String>());
             meaning.push(si_part);
             meaning.push(fn_part);
         }
