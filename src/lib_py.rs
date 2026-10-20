@@ -8,7 +8,7 @@ use crate::{
     field::{ArrayField, Field, FieldName, MultiParser, Parser, ParserExtension, PyParser},
     field_mapping::{FieldMapping, FieldParser, FieldParserTree},
     output::{COMPRESSION_LEVEL, Output, OutputReport},
-    parse_csv, parse_hive_keys, parse_regexp, parse_sqlite, parse_srum,
+    parse_csv, parse_hive_keys, parse_regexp, parse_sqlite,
     parser::{
         evtx::parse_evtx,
         hive::parse_hive_values,
@@ -133,7 +133,6 @@ pub fn dfir_ogre_common(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_hive_values, m)?)?;
     m.add_function(wrap_pyfunction!(parse_regexp, m)?)?;
     m.add_function(wrap_pyfunction!(parse_sqlite, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_srum, m)?)?;
     m.add_function(wrap_pyfunction!(parse_xml, m)?)?;
     m.add_function(wrap_pyfunction!(security_descriptor_from_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(win_frn_hex_parser, m)?)?;

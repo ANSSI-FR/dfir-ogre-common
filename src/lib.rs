@@ -51,7 +51,6 @@ pub use parser::evtx::parse_evtx;
 pub use parser::hive::parse_hive_keys;
 pub use parser::regexp::parse_regexp;
 pub use parser::sqlite::parse_sqlite;
-pub use parser::srum::parse_srum;
 pub use parser::windows_parsers::win_frn_hex_parser;
 pub use parser::windows_parsers::win_ntfs_flag_parser;
 pub use parser::windows_parsers::win_signed_hash_parser;

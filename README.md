@@ -8,6 +8,30 @@ This project is part of the [DFIR-OGRE](https://github.com/ANSSI-FR/dfir-ogre) s
 
 Please refers to the ogre documentation for more details.
 
+## SRUM parser migration
+
+SRUM parsing now lives in `dfir-ogre-plugin-windows` and uses that package's
+`libesedb-python` dependency. The `Srum` plugin command and its XML configuration
+remain unchanged. Upgrade the Windows plugin before or together with this common
+version: older plugin versions import the removed common SRUM function.
+
+Direct Python callers should replace:
+
+```python
+from dfir_ogre_common import parse_srum
+```
+
+with:
+
+```python
+from dfir_ogre_plugin_windows.srum import parse_srum
+```
+
+The four arguments and `RunReport` result are unchanged. The Rust
+`parser::srum` module and `dfir_ogre_common::parse_srum` export have been removed;
+Rust-only consumers must invoke the Windows Python plugin or retain the older
+common version. Common no longer bundles the `libesedb` C engine.
+
 ## ⚠️ Beta Status
 This software is currently in **beta**. While functional and actively developed, it may still undergo breaking changes, and some artefact parsers may not yet be fully stabilized. We welcome feedback, bug reports, and contributions using the [issue tracker](https://github.com/ANSSI-FR/dfir-ogre/issues).
 

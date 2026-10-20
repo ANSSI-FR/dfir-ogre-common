@@ -788,22 +788,6 @@ def parse_sqlite(
     """
     ...
 
-def parse_srum(
-    input_file: str,
-    run_config: RunConfiguration,
-    plugin_config: PluginConfiguration,
-    metadata: Metadata,
-) -> RunReport:
-    """Parses a SRUM (System Resource Usage Monitor) database file.
-
-    Args:
-        input_file: Path to the SRUM database file.
-        configuration: Configuration for the parsing run.
-        metadata: Metadata associated with the parsing operation.
-
-    """
-    ...
-
 def parse_xml(
     input_file: str,
     run_config: RunConfiguration,

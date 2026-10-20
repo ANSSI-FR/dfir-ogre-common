@@ -5,6 +5,5 @@ pub mod json;
 pub mod regexp;
 pub(crate) mod runner;
 pub mod sqlite;
-pub mod srum;
 pub mod windows_parsers;
 pub mod xml;
