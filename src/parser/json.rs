@@ -271,10 +271,14 @@ fn get_values(
                 })?))
             } else if number.is_u64() {
                 Some(Value::Int(
-                    number
-                        .as_u64()
-                        .ok_or_else(|| Error::FieldParserError("u64".into(), input_name.into()))?
-                        as i64,
+                    i64::try_from(
+                        number.as_u64().ok_or_else(|| {
+                            Error::FieldParserError("u64".into(), input_name.into())
+                        })?,
+                    )
+                    .map_err(|_| {
+                        Error::FieldParserError("i64 (out of range)".into(), input_name.into())
+                    })?,
                 ))
             } else {
                 None
@@ -432,6 +436,100 @@ mod tests {
             }],
             None,
         )
+    }
+
+    #[test]
+    fn json_native_integers_preserve_signed_boundaries_and_precision() {
+        let json = serde_json::from_str::<JsonValue>(
+            r#"{"numbers":[-9223372036854775808,9223372036854775807,9007199254740991,9007199254740992,9007199254740993]}"#,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        parse_json_object(
+            json.as_object().unwrap().clone(),
+            None,
+            true,
+            &mut record,
+            &mut MultiInputContext::new(0),
+        )
+        .unwrap();
+
+        assert_eq!(
+            record.get("numbers"),
+            Some(&Value::Array(vec![
+                Value::Int(i64::MIN),
+                Value::Int(i64::MAX),
+                Value::Int(9_007_199_254_740_991),
+                Value::Int(9_007_199_254_740_992),
+                Value::Int(9_007_199_254_740_993),
+            ]))
+        );
+        let mut output = String::new();
+        record
+            .json_serialise(&mut output, &crate::DateOutputCodec::Iso(), true)
+            .unwrap();
+        assert_eq!(serde_json::from_str::<JsonValue>(&output).unwrap(), json);
+    }
+
+    #[test]
+    fn json_native_unsigned_overflow_reports_field_error_in_all_containers() {
+        for number in ["9223372036854775808", "18446744073709551615"] {
+            for (input, field) in [
+                (format!(r#"{{"number":{number}}}"#), "number"),
+                (format!(r#"{{"nested":{{"number":{number}}}}}"#), "number"),
+                (format!(r#"{{"numbers":[1,{number}]}}"#), "numbers"),
+                (format!(r#"{{"items":[{{"number":{number}}}]}}"#), "number"),
+            ] {
+                let json: JsonValue = serde_json::from_str(&input).unwrap();
+                let error = parse_json_object(
+                    json.as_object().unwrap().clone(),
+                    None,
+                    true,
+                    &mut Record::new(),
+                    &mut MultiInputContext::new(0),
+                )
+                .expect_err("integer overflow must not produce a wrapped runtime value");
+                assert!(
+                    matches!(error, Error::FieldParserError(ref kind, ref name)
+                        if kind.contains("i64") && name == field),
+                    "unexpected error for {input}: {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn jsonl_unsigned_overflow_reports_line_error_and_continues() {
+        let output_folder = test_folder("jsonl_unsigned_overflow");
+        let input_path = output_folder.join("input.jsonl");
+        fs::write(
+            &input_path,
+            "{\"event\":\"first\",\"number\":9223372036854775807}\n{\"event\":\"bad\",\"number\":9223372036854775808}\n{\"event\":\"last\",\"number\":9007199254740993}\n",
+        )
+        .unwrap();
+        let report = parse_jsonl(
+            input_path.to_str().unwrap(),
+            RunConfiguration::new(vec![output_conf("overflow", &output_folder)], true, None),
+            json_plugin_config("json_edge", simple_event_mapping()),
+            Metadata::new("test".into()),
+        );
+
+        assert_eq!(report.num_errors, 1);
+        let error = report.last_error.as_deref().unwrap();
+        assert!(error.contains("Line 2:"), "{error}");
+        assert!(error.contains("i64") && error.contains("number"), "{error}");
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 2);
+        let jsonl = fs::read_to_string(output_folder.join("overflow.json_edge.jsonl")).unwrap();
+        let records: Vec<JsonValue> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["event"], "first");
+        assert_eq!(records[0]["number"].as_i64(), Some(i64::MAX));
+        assert_eq!(records[1]["event"], "last");
+        assert_eq!(records[1]["number"].as_i64(), Some(9_007_199_254_740_993));
+        remove_dir_if_exists(&output_folder);
     }
 
     fn nested_json_mapping() -> FieldMapping {

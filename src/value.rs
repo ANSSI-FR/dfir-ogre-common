@@ -150,7 +150,7 @@ impl Value {
                 Value::Date(date_time) => {
                     let v = serialize_date(date_time, date_codec);
                     buffer.push('\"');
-                    buffer.push_str(&v);
+                    buffer.push_str(&escape_special_chars(&v));
                     buffer.push('\"');
                 }
 
@@ -405,6 +405,63 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&buffer).unwrap();
         assert_eq!(parsed[key], "value");
+    }
+
+    #[test]
+    fn json_serialise_date_escapes_custom_pattern_literals() {
+        let timestamp = DateTime::parse_from_rfc3339("2020-01-02T03:04:05Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        for (pattern, expected) in [
+            ("%Y\"%m", "2020\"01"),
+            ("%Y\\%m", "2020\\01"),
+            ("%Y%n%m", "2020\n01"),
+            ("%Y%t%m", "2020\t01"),
+        ] {
+            let mut buffer = String::new();
+            Value::json_serialise_value(
+                &Value::Date(timestamp),
+                &mut buffer,
+                &DateOutputCodec::Pattern(pattern.to_owned()),
+                true,
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&buffer).unwrap(),
+                expected
+            );
+            assert_eq!(buffer.lines().count(), 1);
+        }
+    }
+
+    #[test]
+    fn json_serialise_nested_dates_preserves_custom_pattern_and_normal_bytes() {
+        let timestamp = DateTime::parse_from_rfc3339("2020-01-02T03:04:05Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut nested = Record::new();
+        nested.add("when", Value::Date(timestamp));
+        let value = Value::Array(vec![Value::Date(timestamp), Value::Object(nested)]);
+        for (codec, expected, expected_bytes) in [
+            (
+                DateOutputCodec::Pattern("%Y\"\\%n%t%m".to_owned()),
+                "2020\"\\\n\t01",
+                "[\"2020\\\"\\\\\\n\\t01\",{\"when\":\"2020\\\"\\\\\\n\\t01\"}]",
+            ),
+            (
+                DateOutputCodec::Iso(),
+                "2020-01-02T03:04:05.000000+00:00",
+                "[\"2020-01-02T03:04:05.000000+00:00\",{\"when\":\"2020-01-02T03:04:05.000000+00:00\"}]",
+            ),
+        ] {
+            let mut buffer = String::new();
+            Value::json_serialise_value(&value, &mut buffer, &codec, true).unwrap();
+            assert_eq!(buffer, expected_bytes);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&buffer).unwrap(),
+                serde_json::json!([expected, {"when": expected}])
+            );
+        }
     }
 
     #[test]

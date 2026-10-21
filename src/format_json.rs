@@ -829,6 +829,78 @@ mod tests {
     }
 
     #[test]
+    fn normalized_custom_dates_are_single_jsonl_records_consistent_with_metadata_and_timeline() {
+        let output_folder = Path::new(TMP_FOLDER).join("test_custom_date_jsonl");
+        remove_dir_if_exists(&output_folder);
+        fs::create_dir_all(&output_folder).unwrap();
+        let timestamp =
+            crate::date_util::parse_date("2020-01-02T03:04:05Z", &DateInputCodec::Iso()).unwrap();
+        let mut metadata = Metadata::new("host-custom-date".into());
+        metadata.creation_date = Some(timestamp);
+        let mut line_builder = LineBuilder::new(
+            metadata,
+            Some(TimeLineBuilder::new(
+                TimeLineType::Standard,
+                "custom_date".into(),
+                100,
+                None,
+                None,
+            )),
+            FieldMapping::new(
+                vec![Field::Single {
+                    name: FieldName::new("when".into(), false, None, None, None),
+                    parser: Parser::DateTime(DateInputCodec::Iso()),
+                    default_value: None,
+                }],
+                None,
+            ),
+            true,
+            false,
+            true,
+        );
+        let mut output = JsonFormatter::new(
+            OutputType::File,
+            output_folder.to_str().unwrap(),
+            "custom_date",
+            DateOutputCodec::Pattern("%Y\"\\%n%t%m".into()),
+            false,
+            true,
+            7,
+            FileReport::default(),
+            JsonMode::Normalized,
+        )
+        .unwrap();
+        let mut record = Record::new();
+        record.add("when", Value::Date(timestamp));
+        line_builder.build(&mut record).unwrap();
+        output.write_metadata(&line_builder).unwrap();
+        output.write_normalized(&line_builder).unwrap();
+        assert!(output.reports().iter().all(|report| report.num_lines == 1));
+        output.close().unwrap();
+
+        let records: Vec<serde_json::Value> = [
+            "custom_date.jsonl",
+            "ogre_metadata.jsonl",
+            "custom_date.tl.jsonl",
+        ]
+        .into_iter()
+        .map(|file_name| {
+            let content = fs::read_to_string(output_folder.join(file_name)).unwrap();
+            assert_eq!(content.lines().count(), 1, "{file_name}: {content}");
+            serde_json::from_str(&content).unwrap()
+        })
+        .collect();
+        let (data, metadata, timeline) = (&records[0], &records[1], &records[2]);
+        assert_eq!(data["when"], "2020\"\\\n\t01");
+        assert_eq!(metadata["creation_date"], data["when"]);
+        assert_eq!(timeline["timestamp"], data["when"]);
+        assert_eq!(data["ogre_md_id"], metadata["id"]);
+        assert_eq!(timeline["metadata_id"], metadata["id"]);
+        assert_eq!(timeline["data_id"], data["ogre_id"]);
+        remove_dir_if_exists(&output_folder);
+    }
+
+    #[test]
     fn timeline_json_write_does_not_mutate_source_timelines() {
         let output_folder = Path::new(TMP_FOLDER).join("test_json_timeline_no_mutation_dir");
         remove_dir_if_exists(&output_folder);
