@@ -43,7 +43,7 @@ pub enum OutputType {
     Gzip,
 }
 impl OutputType {
-    fn from_str(output_type: &str) -> Result<OutputType, Error> {
+    pub(crate) fn from_str(output_type: &str) -> Result<OutputType, Error> {
         match output_type.to_lowercase().as_str() {
             "file" => Ok(Self::File),
             "gzip" => Ok(Self::Gzip),
@@ -61,7 +61,7 @@ pub enum OutputFormat {
     NormalizedCsv,
 }
 impl OutputFormat {
-    fn from_str(format: &str) -> Result<OutputFormat, Error> {
+    pub(crate) fn from_str(format: &str) -> Result<OutputFormat, Error> {
         match format {
             "jsonl" => Ok(OutputFormat::Jsonl),
             "normalized_jsonl" => Ok(OutputFormat::NormalizedJsonl),
@@ -237,7 +237,6 @@ impl Output {
 
         for output_conf in &run_config.output {
             let output_date_codec = DateOutputCodec::from_string(output_conf.date_format.as_str());
-            output_date_codec.validate()?;
             let output_format = OutputFormat::from_str(&output_conf.format)?;
             let output_type = OutputType::from_str(&output_conf.output_type)?;
 
@@ -250,16 +249,7 @@ impl Output {
                 compute_hash = true;
             }
 
-            let compression_level = output_conf.params.get(COMPRESSION_LEVEL);
-            let compression_level: u32 = match compression_level {
-                Some(c) => c.parse()?,
-                None => DEFAULT_COMPRESSION_LEVEL,
-            };
-            if compression_level > 9 {
-                return Err(Error::ConfigurationError(format!(
-                    "Invalid compression level '{compression_level}', expected a value from 0 to 9"
-                )));
-            }
+            let compression_level = output_conf.compression_level()?;
 
             if output_conf.with_timeline {
                 compute_timeline = true;

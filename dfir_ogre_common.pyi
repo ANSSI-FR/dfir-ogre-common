@@ -615,6 +615,13 @@ class OutputConfiguration:
         """
         ...
 
+    def validate(self) -> None:
+        """Validate output options, raising an exception for invalid settings.
+
+        Does not create output directories or open files.
+        """
+        ...
+
     def __deepcopy__(self, _memo: Any) -> OutputConfiguration:
         """Return a deep copy of this OutputConfiguration instance.
 

@@ -2,7 +2,13 @@ use std::collections::HashMap;
 
 use pyo3::prelude::*;
 
-use crate::{Error, output::OutputReport};
+use crate::{
+    Error,
+    date_util::DateOutputCodec,
+    output::{
+        COMPRESSION_LEVEL, DEFAULT_COMPRESSION_LEVEL, OutputFormat, OutputReport, OutputType,
+    },
+};
 use log::error;
 /// Holds the command a plugin runs and a short description of its purpose.
 #[derive(Debug, Clone)]
@@ -96,6 +102,19 @@ impl OutputConfiguration {
             params,
         }
     }
+
+    pub(crate) fn compression_level(&self) -> Result<u32, Error> {
+        let compression_level = match self.params.get(COMPRESSION_LEVEL) {
+            Some(level) => level.parse()?,
+            None => DEFAULT_COMPRESSION_LEVEL,
+        };
+        if compression_level > 9 {
+            return Err(Error::ConfigurationError(format!(
+                "Invalid compression level '{compression_level}', expected a value from 0 to 9"
+            )));
+        }
+        Ok(compression_level)
+    }
 }
 
 #[pymethods]
@@ -135,6 +154,20 @@ impl OutputConfiguration {
     /// Implements Python's `deepcopy` protocol by cloning the struct.
     pub fn __deepcopy__(&self, _memo: Py<PyAny>) -> Self {
         self.clone()
+    }
+
+    /// Validates output options without opening or creating output files.
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.format == "analytics_jsonl" && self.timeline_include_undated {
+            return Err(Error::ConfigurationError(
+                "'timeline_include_undated' is not supported with 'analytics_jsonl'".to_owned(),
+            ));
+        }
+        DateOutputCodec::from_string(&self.date_format).validate()?;
+        OutputFormat::from_str(&self.format)?;
+        OutputType::from_str(&self.output_type)?;
+        self.compression_level()?;
+        Ok(())
     }
 }
 
@@ -184,14 +217,8 @@ impl RunConfiguration {
             ));
         }
 
-        if self
-            .output
-            .iter()
-            .any(|output| output.format == "analytics_jsonl" && output.timeline_include_undated)
-        {
-            return Err(Error::ConfigurationError(
-                "'timeline_include_undated' is not supported with 'analytics_jsonl'".to_owned(),
-            ));
+        for output in &self.output {
+            output.validate()?;
         }
 
         Ok(())
@@ -293,6 +320,168 @@ mod tests {
 
         assert!(config.with_timeline);
         assert!(config.timeline_include_undated);
+    }
+
+    fn valid_output_configuration() -> OutputConfiguration {
+        OutputConfiguration::new(
+            "events".to_owned(),
+            ".tmp/validate-output".to_owned(),
+            "file".to_owned(),
+            "jsonl".to_owned(),
+            "iso_utc".to_owned(),
+            false,
+            true,
+            HashMap::new(),
+        )
+    }
+
+    #[test]
+    fn output_configuration_validation_accepts_supported_options() {
+        for output_type in ["file", "gzip", "GZIP"] {
+            for format in [
+                "jsonl",
+                "csv",
+                "normalized_jsonl",
+                "normalized_csv",
+                "analytics_jsonl",
+            ] {
+                for date_format in ["iso", "iso_utc", "utc_naive", "%Y-%m-%d %H:%M:%S%:z"] {
+                    for compression_level in [None, Some("0"), Some("9")] {
+                        let mut output = valid_output_configuration();
+                        output.output_type = output_type.to_owned();
+                        output.format = format.to_owned();
+                        output.date_format = date_format.to_owned();
+                        if let Some(level) = compression_level {
+                            output
+                                .params
+                                .insert("compression_level".to_owned(), level.to_owned());
+                        }
+
+                        output.validate().unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn output_configuration_validation_rejects_unsupported_output_type() {
+        let mut output = valid_output_configuration();
+        output.output_type = "stdout".to_owned();
+
+        assert!(matches!(
+            output.validate(),
+            Err(Error::InvalidOutputType(_))
+        ));
+    }
+
+    #[test]
+    fn output_configuration_validation_rejects_unsupported_format() {
+        let mut output = valid_output_configuration();
+        output.format = "json".to_owned();
+
+        assert!(matches!(
+            output.validate(),
+            Err(Error::InvalidOutputFormat(_))
+        ));
+    }
+
+    #[test]
+    fn output_configuration_validation_rejects_invalid_date_pattern() {
+        let mut output = valid_output_configuration();
+        output.date_format = "%Y-%Q".to_owned();
+
+        let error = output.validate().unwrap_err();
+
+        assert!(matches!(error, Error::ConfigurationError(_)));
+        assert!(error.to_string().contains("Invalid date output pattern"));
+    }
+
+    #[test]
+    fn output_configuration_validation_rejects_non_integer_compression_levels() {
+        for level in ["fast", "", "-1", "1.5", "4294967296"] {
+            let mut output = valid_output_configuration();
+            output
+                .params
+                .insert("compression_level".to_owned(), level.to_owned());
+
+            assert!(
+                matches!(output.validate(), Err(Error::ParseInt(_))),
+                "level: {level}"
+            );
+        }
+    }
+
+    #[test]
+    fn output_configuration_validation_rejects_out_of_range_compression_levels() {
+        for level in ["10", "4294967295"] {
+            let mut output = valid_output_configuration();
+            output
+                .params
+                .insert("compression_level".to_owned(), level.to_owned());
+
+            let error = output.validate().unwrap_err();
+
+            assert!(matches!(error, Error::ConfigurationError(_)));
+            assert!(error.to_string().contains("expected a value from 0 to 9"));
+        }
+    }
+
+    #[test]
+    fn output_configuration_validation_rejects_analytics_undated_option() {
+        for with_timeline in [false, true] {
+            let mut output = valid_output_configuration();
+            output.format = "analytics_jsonl".to_owned();
+            output.with_timeline = with_timeline;
+            output.timeline_include_undated = true;
+
+            assert!(matches!(
+                output.validate(),
+                Err(Error::ConfigurationError(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn output_configuration_validation_allows_undated_option_without_timeline() {
+        let mut output = valid_output_configuration();
+        output.timeline_include_undated = true;
+
+        output.validate().unwrap();
+    }
+
+    #[test]
+    fn output_configuration_validation_does_not_create_output_folder() {
+        let output_folder = std::env::temp_dir().join(format!(
+            "dfir-ogre-validate-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut output = valid_output_configuration();
+        output.output_folder = output_folder.display().to_string();
+        output.output_type = "gzip".to_owned();
+        output.format = "normalized_jsonl".to_owned();
+        output.with_timeline = true;
+        assert!(!output_folder.exists());
+
+        output.validate().unwrap();
+
+        assert!(!output_folder.exists());
+    }
+
+    #[test]
+    fn run_configuration_validation_rejects_invalid_later_output() {
+        let mut invalid = valid_output_configuration();
+        invalid.output_type = "stdout".to_owned();
+        let config = RunConfiguration::new(vec![valid_output_configuration(), invalid], true, None);
+
+        assert!(matches!(
+            config.validate(),
+            Err(Error::InvalidOutputType(_))
+        ));
     }
 
     #[test]
