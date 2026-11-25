@@ -1,0 +1,10 @@
+{
+  "Event": {
+    "System": {"EventRecordID": 42},
+    "EventData": {
+      "maximum": 18446744073709551615,
+      "nested": {"large": 9223372036854775808},
+      "numbers": [0, 18446744073709551615]
+    }
+  }
+}

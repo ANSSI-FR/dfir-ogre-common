@@ -154,6 +154,148 @@ mod tests {
         path
     }
 
+    #[test]
+    fn evtx_uint_values_survive_all_export_formats_with_stable_ids() {
+        let folder = test_folder("evtx_uint_all_formats");
+        let formats = [
+            "jsonl",
+            "csv",
+            "normalized_jsonl",
+            "normalized_csv",
+            "analytics_jsonl",
+        ];
+        let outputs = formats
+            .iter()
+            .map(|format| {
+                OutputConfiguration::new(
+                    "events".into(),
+                    folder.join(format).display().to_string(),
+                    "file".into(),
+                    (*format).into(),
+                    "iso".into(),
+                    true,
+                    true,
+                    HashMap::new(),
+                )
+            })
+            .collect();
+        let configuration = PluginConfiguration::from_str(
+            &fs::read_to_string("test_data/evtx/unsigned_event.xml").unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+        let tree = configuration.get_parsers(None).unwrap();
+        let output = Output::new(
+            RunConfiguration::new(outputs, false, None),
+            configuration,
+            Metadata::new("uint-test".into()),
+            None,
+        )
+        .unwrap();
+        let mut report = RunReport::new();
+        runner::with_output(output, &mut report, |output, report| {
+            let mut tuple = Record::new();
+            tuple.add(
+                "timestamp",
+                crate::Value::Date(
+                    DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                        .unwrap()
+                        .to_utc(),
+                ),
+            );
+            parse_record(
+                SerializedEvtxRecord {
+                    event_record_id: 42,
+                    timestamp: "2026-01-01T00:00:00Z".parse().unwrap(),
+                    data: serde_json::from_str(
+                        &fs::read_to_string("test_data/evtx/unsigned_event.json").unwrap(),
+                    )
+                    .unwrap(),
+                },
+                &mut tuple,
+                output,
+                &tree,
+                report,
+            );
+            Ok(())
+        });
+        assert_eq!(report.num_errors, 0, "{:?}", report.last_error);
+        let mut ids = Vec::new();
+        for format in formats {
+            let extension = if format.ends_with("csv") {
+                "csv"
+            } else {
+                "jsonl"
+            };
+            let path = folder
+                .join(format)
+                .join(format!("events.unsigned_events.{extension}"));
+            let (data, id) = if extension == "jsonl" {
+                let row: JsonValue =
+                    serde_json::from_str(fs::read_to_string(&path).unwrap().trim()).unwrap();
+                let id = row
+                    .get("data_id")
+                    .or_else(|| row.get("ogre_id"))
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                let data = row.get("data").cloned().unwrap_or(row);
+                (data, id)
+            } else {
+                let mut reader = csv::ReaderBuilder::new()
+                    .delimiter(crate::format_csv::CSV_DELIMITER as u8)
+                    .from_path(&path)
+                    .unwrap();
+                let headers = reader.headers().unwrap().clone();
+                let row = reader.records().next().unwrap().unwrap();
+                assert!(reader.records().next().is_none());
+                let column = |name: &str| headers.iter().position(|header| header == name).unwrap();
+                let data: JsonValue = if headers.iter().any(|name| name == "data") {
+                    serde_json::from_str(&row[column("data")]).unwrap()
+                } else {
+                    serde_json::json!({"event_data": serde_json::from_str::<JsonValue>(&row[column("event_data")]).unwrap()})
+                };
+                let id = headers
+                    .iter()
+                    .position(|header| header == "data_id" || header == "ogre_id")
+                    .map(|column| row[column].to_owned())
+                    .unwrap_or_else(|| data["ogre_id"].as_str().unwrap().to_owned());
+                (data, id)
+            };
+            assert_eq!(
+                data["event_data"]["maximum"].as_u64(),
+                Some(u64::MAX),
+                "{format}"
+            );
+            assert_eq!(
+                data["event_data"]["nested"]["large"].as_u64(),
+                Some(9_223_372_036_854_775_808),
+                "{format}"
+            );
+            assert_eq!(
+                data["event_data"]["numbers"][1].as_u64(),
+                Some(u64::MAX),
+                "{format}"
+            );
+            assert!(!id.is_empty());
+            ids.push(id);
+            if format.starts_with("normalized_") || format == "analytics_jsonl" {
+                let timeline = folder
+                    .join(format)
+                    .join(format!("events.unsigned_events.tl.{extension}"));
+                assert!(
+                    fs::read_to_string(timeline)
+                        .unwrap()
+                        .contains("18446744073709551615")
+                );
+            }
+        }
+        assert!(ids.windows(2).all(|pair| pair[0] == pair[1]), "{ids:?}");
+        remove_dir_if_exists(&folder);
+    }
+
     fn evtx_nested_system_time_plugin_config() -> PluginConfiguration {
         let field_mapping = FieldMapping::new(
             vec![

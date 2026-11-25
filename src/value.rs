@@ -434,10 +434,6 @@ mod tests {
                 digest(&Value::UInt(number as u64))
             );
         }
-        assert_eq!(
-            digest(&Value::UInt(u64::MAX)),
-            digest(&Value::UInt(u64::MAX))
-        );
         assert_ne!(digest(&Value::UInt(u64::MAX)), digest(&Value::Int(-1)));
         assert_ne!(
             digest(&Value::UInt(u64::MAX)),

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<plugin parser="Evtx">
+  <mapping data_type="unsigned_events">
+    <default_parser value="String" />
+    <timeline>
+      <timeline_type value="Standard" />
+      <max_date_meaning value="1" />
+      <description><output_name value="event_data.maximum" /></description>
+    </timeline>
+    <fields>
+      <field input="timestamp" parser="DateTime" />
+      <object input="System" output="system">
+        <field input="EventRecordID" output="event_record_id" parser="Int" />
+      </object>
+      <object input="EventData" output="event_data">
+        <field input="maximum" parser="UInt" primary_key="true" />
+        <object input="nested"><field input="large" parser="UInt" /></object>
+        <array><field input="numbers" parser="UInt" /></array>
+      </object>
+    </fields>
+  </mapping>
+</plugin>
