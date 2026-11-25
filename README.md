@@ -8,6 +8,38 @@ This project is part of the [DFIR-OGRE](https://github.com/ANSSI-FR/dfir-ogre) s
 
 Please refers to the ogre documentation for more details.
 
+## Unsigned integers
+
+The runtime supports signed `Value::Int(i64)` and unsigned `Value::UInt(u64)`
+integers. JSON, JSONL and EVTX values up to `i64::MAX` retain the signed
+representation; larger positive integers through `18446744073709551615`
+(`u64::MAX`) are preserved as unsigned values. They are written as exact decimal
+numbers in JSON/JSONL and CSV, including nested data and timeline output.
+
+Use `parser="UInt"` for an explicitly unsigned decimal field in plugin XML:
+
+```xml
+<field input="counter" output="counter" parser="UInt" />
+```
+
+`Parser.UInt()` and `Value.UInt(value)` expose the corresponding Python types.
+UInt accepts values from zero through `2**64 - 1`; Int remains signed, from
+`-2**63` through `2**63 - 1`. Explicit integer mappings validate native JSON
+numbers as well as strings, including mapped array elements. Negative,
+fractional and overflowing values fail UInt parsing. Missing and empty text
+fields follow the existing null/default conventions, and UInt can be used in
+Dynamic parsers. In `multi_input`, integer children are checked before joining;
+valid source text, including leading zeros, is preserved, and missing, null or
+empty inputs use a declared default. A null native JSON scalar remains null.
+`default_parser` remains limited to String or Ignore.
+
+Small integer values keep their existing generated identifiers. A large UInt
+has a distinct canonical representation from a wrapped negative value, such as
+`-1`. Artifact-specific sentinel interpretation belongs in the relevant mapping.
+JSON readers must support these integer ranges to preserve precision; readers
+that convert all numbers to floating point can round the values even though
+the exported decimal text is exact.
+
 ## SRUM parser migration
 
 SRUM parsing now lives in `dfir-ogre-plugin-windows` and uses that package's
