@@ -1066,16 +1066,22 @@ impl MultiInputField {
             return Ok(());
         };
         let input_count = self.input_fields.len();
-        let checked;
-        let input = if let Field::Single { parser, .. } = &self.input_fields[input_index]
+        let input = if let Field::Single {
+            parser,
+            default_value,
+            ..
+        } = &self.input_fields[input_index]
             && parser.requires_checked_integer()
         {
-            checked = self.input_fields[input_index]
+            self.input_fields[input_index]
                 .get_value(input)
-                .map_err(|error| Error::ParseField(name.to_owned(), error.to_string()))?
-                .filter(|value| !value.is_null())
-                .map(|value| value.to_string(&crate::DateOutputCodec::Iso()));
-            checked.as_deref()
+                .map_err(|error| Error::ParseField(name.to_owned(), error.to_string()))?;
+            // Joining preserves source spelling, including zeros significant to IDs.
+            if input.is_none_or(str::is_empty) {
+                default_value.as_deref().or(input)
+            } else {
+                input
+            }
         } else {
             input
         };
@@ -1200,6 +1206,31 @@ mod tests {
                 .parse("counter", Some("-1"), &mut record, &mut context)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn uint_multi_input_validation_preserves_source_and_default_spelling() {
+        for parser in [Parser::Int(), Parser::UInt()] {
+            let group = MultiInputField::new(
+                vec![Field::Single {
+                    name: FieldName::new("counter".into(), false, None, None, None),
+                    parser,
+                    default_value: Some("0008".into()),
+                }],
+                FieldName::new("joined".into(), false, None, None, None),
+                MultiParser::Join(":".into(), false),
+            );
+            let mut record = Record::new();
+            let mut context = MultiInputContext::default();
+            group
+                .parse("counter", Some("0007"), &mut record, &mut context)
+                .unwrap();
+            assert_eq!(record.get("joined"), Some(&Value::String("0007".into())));
+            group
+                .parse("counter", None, &mut record, &mut context)
+                .unwrap();
+            assert_eq!(record.get("joined"), Some(&Value::String("0008".into())));
+        }
     }
 
     #[test]

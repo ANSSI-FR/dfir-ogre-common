@@ -198,41 +198,64 @@ fn parse_mapped_field(
                 parser.parse_with_context(Some(value), record, multi_input_context)?;
                 return Ok(true);
             }
-            if !value.is_null()
-                && parser
-                    .fields
-                    .iter()
-                    .any(|field| field_uses_integer_parser(field, input_name))
+            if parser
+                .fields
+                .iter()
+                .any(|field| field_uses_integer_parser(field, input_name))
             {
-                parser.parse_with_context(Some(&value.to_string()), record, multi_input_context)?;
+                for field in &parser.fields {
+                    if field_uses_integer_parser(field, input_name)
+                        && (!value.is_null() || matches!(field, Field::Multi(_)))
+                    {
+                        let input = (!value.is_null()).then(|| value.to_string());
+                        field.parse_with_context(
+                            input_name,
+                            input.as_deref(),
+                            record,
+                            multi_input_context,
+                        )?;
+                    } else if let Some(native) = get_values(
+                        input_name,
+                        value.clone(),
+                        Some(parser_tree),
+                        parse_unknown,
+                        multi_input_context,
+                    )? {
+                        field.set_value(native, record)?;
+                    }
+                }
                 return Ok(true);
             }
             Ok(false)
         }
         Some(ParserType::Array { field }) => {
-            let (ParserType::Field { parser }, JsonValue::Array(values)) =
-                (field.0.as_ref(), value)
-            else {
+            let ParserType::Field { parser } = field.0.as_ref() else {
                 return Ok(false);
             };
-            if parser.fields.len() == 1
-                && !parser
-                    .fields
-                    .iter()
-                    .any(|field| field_uses_integer_parser(field, input_name))
-            {
+            let integer = parser
+                .fields
+                .iter()
+                .any(|field| field_uses_integer_parser(field, input_name));
+            let JsonValue::Array(values) = value else {
+                if integer && !value.is_null() {
+                    return Err(Error::ValueTypeInvalid(
+                        input_name.to_owned(),
+                        "Array".to_owned(),
+                    ));
+                }
+                return Ok(false);
+            };
+            if parser.fields.len() == 1 && !integer {
                 return Ok(false);
             }
             for field in &parser.fields {
                 let mut parsed = Vec::with_capacity(values.len());
                 for value in values {
                     let item = match value {
-                        JsonValue::Null => Some(Value::Null()),
-                        JsonValue::String(value) => field.get_value(Some(value))?,
+                        JsonValue::Null => Ok(Some(Value::Null())),
+                        JsonValue::String(value) => field.get_value(Some(value)),
                         value if field_uses_integer_parser(field, input_name) => {
-                            field.get_value(Some(&value.to_string())).map_err(|error| {
-                                Error::ParseField(input_name.to_owned(), error.to_string())
-                            })?
+                            field.get_value(Some(&value.to_string()))
                         }
                         value => get_values(
                             input_name,
@@ -240,8 +263,9 @@ fn parse_mapped_field(
                             Some(parser_tree),
                             parse_unknown,
                             multi_input_context,
-                        )?,
-                    };
+                        ),
+                    }
+                    .map_err(|error| Error::ParseField(input_name.to_owned(), error.to_string()))?;
                     if let Some(item) = item {
                         parsed.push(item);
                     }
@@ -575,6 +599,7 @@ mod tests {
         );
         for input in [
             r#"{"counters":[-1]}"#,
+            r#"{"counters":["-1"]}"#,
             r#"{"counters":[1.5]}"#,
             r#"{"counters":[true]}"#,
             r#"{"counters":[{"nested":1}]}"#,
@@ -627,6 +652,44 @@ mod tests {
         assert_eq!(record.get("value"), Some(&Value::UInt(u64::MAX)));
         let signed = r#"<field input="value" parser="Int"/>"#;
         assert!(parse_integer_mapping(r#"{"value":18446744073709551615}"#, signed).is_err());
+    }
+
+    #[test]
+    fn uint_alias_keeps_other_native_scalar_mappings_unchanged() {
+        let fields = r#"<field input="value" output="unsigned" parser="UInt"/><field input="value" output="text" parser="String"/><field input="value" output="date" parser="DateTime"/>"#;
+        let record = parse_integer_mapping(r#"{"value":42}"#, fields).unwrap();
+        assert_eq!(record.get("unsigned"), Some(&Value::UInt(42)));
+        assert_eq!(record.get("text"), Some(&Value::Int(42)));
+        assert_eq!(record.get("date"), Some(&Value::Int(42)));
+    }
+
+    #[test]
+    fn uint_array_mapping_rejects_non_array_containers() {
+        let fields = r#"<array><field input="values" parser="UInt"/></array>"#;
+        for value in [r#"{}"#, r#"{"counter":-1}"#, "42", "true", r#""42""#] {
+            let error =
+                parse_integer_mapping(&format!(r#"{{"values":{value}}}"#), fields).unwrap_err();
+            assert!(error.to_string().contains("values"), "{error}");
+        }
+        assert_eq!(
+            parse_integer_mapping(r#"{"values":null}"#, fields)
+                .unwrap()
+                .get("values"),
+            Some(&Value::Null())
+        );
+        assert_eq!(
+            parse_integer_mapping(r#"{"values":[]}"#, fields)
+                .unwrap()
+                .get("values"),
+            Some(&Value::Array(vec![]))
+        );
+    }
+
+    #[test]
+    fn uint_multi_input_null_uses_the_checked_default() {
+        let fields = r#"<multi_input output="joined" parser="Join" separator=":"><field input="label" parser="String"/><field input="counter" parser="UInt" default_value="7"/></multi_input>"#;
+        let record = parse_integer_mapping(r#"{"label":"count","counter":null}"#, fields).unwrap();
+        assert_eq!(record.get("joined"), Some(&Value::String("count:7".into())));
     }
 
     #[test]
