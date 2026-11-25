@@ -270,16 +270,9 @@ fn get_values(
                     Error::FieldParserError("i64".into(), input_name.into())
                 })?))
             } else if number.is_u64() {
-                Some(Value::Int(
-                    i64::try_from(
-                        number.as_u64().ok_or_else(|| {
-                            Error::FieldParserError("u64".into(), input_name.into())
-                        })?,
-                    )
-                    .map_err(|_| {
-                        Error::FieldParserError("i64 (out of range)".into(), input_name.into())
-                    })?,
-                ))
+                Some(Value::UInt(number.as_u64().ok_or_else(|| {
+                    Error::FieldParserError("u64".into(), input_name.into())
+                })?))
             } else {
                 None
             }
@@ -472,63 +465,64 @@ mod tests {
     }
 
     #[test]
-    fn json_native_unsigned_overflow_reports_field_error_in_all_containers() {
+    fn json_native_unsigned_integers_roundtrip_in_all_containers() {
         for number in ["9223372036854775808", "18446744073709551615"] {
-            for (input, field) in [
-                (format!(r#"{{"number":{number}}}"#), "number"),
-                (format!(r#"{{"nested":{{"number":{number}}}}}"#), "number"),
-                (format!(r#"{{"numbers":[1,{number}]}}"#), "numbers"),
-                (format!(r#"{{"items":[{{"number":{number}}}]}}"#), "number"),
+            for input in [
+                format!(r#"{{"number":{number}}}"#),
+                format!(r#"{{"nested":{{"number":{number}}}}}"#),
+                format!(r#"{{"numbers":[1,{number}]}}"#),
+                format!(r#"{{"items":[{{"number":{number}}}]}}"#),
             ] {
                 let json: JsonValue = serde_json::from_str(&input).unwrap();
-                let error = parse_json_object(
+                let mut record = Record::new();
+                parse_json_object(
                     json.as_object().unwrap().clone(),
                     None,
                     true,
-                    &mut Record::new(),
+                    &mut record,
                     &mut MultiInputContext::new(0),
                 )
-                .expect_err("integer overflow must not produce a wrapped runtime value");
-                assert!(
-                    matches!(error, Error::FieldParserError(ref kind, ref name)
-                        if kind.contains("i64") && name == field),
-                    "unexpected error for {input}: {error}"
-                );
+                .unwrap();
+                let mut output = String::new();
+                record
+                    .json_serialise(&mut output, &crate::DateOutputCodec::Iso(), true)
+                    .unwrap();
+                assert_eq!(serde_json::from_str::<JsonValue>(&output).unwrap(), json);
             }
         }
     }
 
     #[test]
-    fn jsonl_unsigned_overflow_reports_line_error_and_continues() {
-        let output_folder = test_folder("jsonl_unsigned_overflow");
+    fn jsonl_unsigned_integers_keep_every_record_and_exact_value() {
+        let output_folder = test_folder("jsonl_unsigned_integers");
         let input_path = output_folder.join("input.jsonl");
-        fs::write(
-            &input_path,
-            "{\"event\":\"first\",\"number\":9223372036854775807}\n{\"event\":\"bad\",\"number\":9223372036854775808}\n{\"event\":\"last\",\"number\":9007199254740993}\n",
-        )
-        .unwrap();
+        let input = concat!(
+            "{\"event\":\"first\",\"number\":9223372036854775807}\n",
+            "{\"event\":\"unsigned\",\"number\":9223372036854775808}\n",
+            "{\"event\":\"maximum\",\"number\":18446744073709551615}\n",
+            "{\"event\":\"last\",\"number\":9007199254740993}\n",
+        );
+        fs::write(&input_path, input).unwrap();
         let report = parse_jsonl(
             input_path.to_str().unwrap(),
-            RunConfiguration::new(vec![output_conf("overflow", &output_folder)], true, None),
+            RunConfiguration::new(vec![output_conf("unsigned", &output_folder)], true, None),
             json_plugin_config("json_edge", simple_event_mapping()),
             Metadata::new("test".into()),
         );
-
-        assert_eq!(report.num_errors, 1);
-        let error = report.last_error.as_deref().unwrap();
-        assert!(error.contains("Line 2:"), "{error}");
-        assert!(error.contains("i64") && error.contains("number"), "{error}");
-        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 2);
-        let jsonl = fs::read_to_string(output_folder.join("overflow.json_edge.jsonl")).unwrap();
-        let records: Vec<JsonValue> = jsonl
+        assert_eq!(report.num_errors, 0, "{:?}", report.last_error);
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 4);
+        let output = fs::read_to_string(output_folder.join("unsigned.json_edge.jsonl")).unwrap();
+        let records: Vec<JsonValue> = output
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0]["event"], "first");
         assert_eq!(records[0]["number"].as_i64(), Some(i64::MAX));
-        assert_eq!(records[1]["event"], "last");
-        assert_eq!(records[1]["number"].as_i64(), Some(9_007_199_254_740_993));
+        assert_eq!(
+            records[1]["number"].as_u64(),
+            Some(9_223_372_036_854_775_808)
+        );
+        assert_eq!(records[2]["number"].as_u64(), Some(u64::MAX));
+        assert_eq!(records[3]["number"].as_i64(), Some(9_007_199_254_740_993));
         remove_dir_if_exists(&output_folder);
     }
 

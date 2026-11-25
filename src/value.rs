@@ -17,6 +17,8 @@ pub enum Value {
     String(String),
     Array(Vec<Value>),
     Int(i64),
+    /// An exact unsigned 64-bit integer, including values above i64::MAX.
+    UInt(u64),
     Float(f64),
     Bool(bool),
     Date(DateTime<Utc>),
@@ -139,6 +141,9 @@ impl Value {
                 Value::Int(v) => {
                     buffer.push_str(&v.to_string());
                 }
+                Value::UInt(v) => {
+                    buffer.push_str(&v.to_string());
+                }
                 Value::Float(v) => {
                     if v.is_finite() {
                         buffer.push_str(&v.to_string());
@@ -208,6 +213,9 @@ impl Value {
                 Value::Int(v) => {
                     buffer.push_str(&v.to_string());
                 }
+                Value::UInt(v) => {
+                    buffer.push_str(&v.to_string());
+                }
                 Value::Float(v) => {
                     buffer.push_str(&v.to_string());
                 }
@@ -263,6 +271,7 @@ impl Value {
                 buffer
             }
             Value::Int(v) => v.to_string(),
+            Value::UInt(v) => v.to_string(),
             Value::Float(v) => v.to_string(),
             Value::Bool(v) => v.to_string(),
             Value::Date(date_time) => serialize_date(date_time, date_codec),
@@ -312,6 +321,15 @@ impl Value {
             Value::Int(i) => {
                 hash_util::write_tag(hasher, 3);
                 hash_util::write_i64(hasher, *i);
+            }
+            Value::UInt(value) => {
+                if let Ok(signed) = i64::try_from(*value) {
+                    // Equal integer values keep their existing canonical IDs.
+                    Value::Int(signed).hash_canonical(hasher);
+                } else {
+                    hash_util::write_tag(hasher, 9);
+                    hash_util::write_u64(hasher, *value);
+                }
             }
             Value::Float(f) => {
                 hash_util::write_tag(hasher, 4);
@@ -376,6 +394,57 @@ pub fn escape_special_chars_csv(v: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsigned_values_preserve_json_csv_display_and_nested_values() {
+        for number in [0, i64::MAX as u64, 9_223_372_036_854_775_808, u64::MAX] {
+            let value = Value::UInt(number);
+            let mut json = String::new();
+            Value::json_serialise_value(&value, &mut json, &DateOutputCodec::Iso(), true).unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&json)
+                    .unwrap()
+                    .as_u64(),
+                Some(number)
+            );
+            let mut csv = String::new();
+            Value::csv_serialise_value(&value, &mut csv, &DateOutputCodec::Iso()).unwrap();
+            assert_eq!(csv, number.to_string());
+            assert_eq!(value.to_string(&DateOutputCodec::Iso()), number.to_string());
+        }
+        let mut nested = Record::new();
+        nested.add("maximum", Value::Array(vec![Value::UInt(u64::MAX)]));
+        let mut json = String::new();
+        nested
+            .json_serialise(&mut json, &DateOutputCodec::Iso(), true)
+            .unwrap();
+        assert_eq!(json, r#"{"maximum":[18446744073709551615]}"#);
+    }
+
+    #[test]
+    fn unsigned_hashes_preserve_small_integer_ids_and_distinguish_wrapped_values() {
+        fn digest(value: &Value) -> blake3::Hash {
+            let mut hasher = Hasher::new();
+            value.hash(&mut hasher);
+            hasher.finalize()
+        }
+        for number in [0, 42, i64::MAX] {
+            assert_eq!(
+                digest(&Value::Int(number)),
+                digest(&Value::UInt(number as u64))
+            );
+        }
+        assert_eq!(
+            digest(&Value::UInt(u64::MAX)),
+            digest(&Value::UInt(u64::MAX))
+        );
+        assert_ne!(digest(&Value::UInt(u64::MAX)), digest(&Value::Int(-1)));
+        assert_ne!(
+            digest(&Value::UInt(u64::MAX)),
+            digest(&Value::String(u64::MAX.to_string()))
+        );
+    }
+
     #[test]
     fn escape_special_chars_behaviour() {
         let cases = vec![
