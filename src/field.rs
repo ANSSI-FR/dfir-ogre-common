@@ -20,6 +20,9 @@ pub enum Parser {
     /// Parses the input as a signed 64-bit integer.
     Int(),
 
+    /// Parses a decimal integer from zero through u64::MAX without wrapping.
+    UInt(),
+
     /// Parses the input as an integer using the specified base (radix), e.g., 2 for binary, 16 for hexadecimal.
     IntRadix(u32),
 
@@ -58,6 +61,14 @@ pub enum Parser {
     Extension(ParserExtension),
 }
 impl Parser {
+    pub(crate) fn requires_checked_integer(&self) -> bool {
+        match self {
+            Self::Int() | Self::UInt() => true,
+            Self::Dynamic(parsers) => parsers.iter().any(Self::requires_checked_integer),
+            _ => false,
+        }
+    }
+
     /// Applies the parsing logic defined by the `Parser` variant to the provided `input` string,
     /// and stores the resulting `Value` in the `output` map under the key `output_name`.
     /// If the input is empty, the function returns early without making any changes.
@@ -150,6 +161,10 @@ impl Parser {
             Parser::Int() => {
                 let value = input.parse()?;
                 Some(Value::Int(value))
+            }
+            Parser::UInt() => {
+                let value = input.parse()?;
+                Some(Value::UInt(value))
             }
             Parser::IntRadix(radix) => {
                 if !(2..=36).contains(radix) {
@@ -1051,6 +1066,19 @@ impl MultiInputField {
             return Ok(());
         };
         let input_count = self.input_fields.len();
+        let checked;
+        let input = if let Field::Single { parser, .. } = &self.input_fields[input_index]
+            && parser.requires_checked_integer()
+        {
+            checked = self.input_fields[input_index]
+                .get_value(input)
+                .map_err(|error| Error::ParseField(name.to_owned(), error.to_string()))?
+                .filter(|value| !value.is_null())
+                .map(|value| value.to_string(&crate::DateOutputCodec::Iso()));
+            checked.as_deref()
+        } else {
+            input
+        };
 
         if multi_input_context.insert(self.group_index, input_index, input_count, input) {
             let mut ordered_dict = IndexMap::new();
@@ -1086,6 +1114,93 @@ mod tests {
     use crate::DateOutputCodec;
 
     use super::*;
+
+    #[test]
+    fn uint_parser_checks_decimal_bounds_and_missing_values() {
+        let parser = Parser::UInt();
+        for (input, expected) in [
+            ("0", 0),
+            ("9223372036854775808", 9_223_372_036_854_775_808),
+            ("18446744073709551615", u64::MAX),
+        ] {
+            assert_eq!(
+                parser.get_value(Some(input)).unwrap(),
+                Some(Value::UInt(expected))
+            );
+        }
+        for input in ["-1", "-0", "18446744073709551616", "1.5", "1e3", "", "text"] {
+            assert!(parser.get_value(Some(input)).is_err(), "accepted {input}");
+        }
+        assert_eq!(parser.get_value(None).unwrap(), Some(Value::Null()));
+        assert!(
+            Parser::Int()
+                .get_value(Some("9223372036854775808"))
+                .is_err()
+        );
+        assert_eq!(
+            Parser::Int().get_value(Some("-1")).unwrap(),
+            Some(Value::Int(-1))
+        );
+    }
+
+    #[test]
+    fn uint_fields_support_defaults_and_dynamic_fallback() {
+        let field = Field::Single {
+            name: FieldName::new("counter".into(), false, None, None, None),
+            parser: Parser::UInt(),
+            default_value: Some(u64::MAX.to_string()),
+        };
+        for input in [None, Some("")] {
+            assert_eq!(field.get_value(input).unwrap(), Some(Value::UInt(u64::MAX)));
+        }
+        let dynamic = Parser::Dynamic(vec![Parser::UInt(), Parser::Int(), Parser::String()]);
+        assert_eq!(
+            dynamic.get_value(Some("18446744073709551615")).unwrap(),
+            Some(Value::UInt(u64::MAX))
+        );
+        assert_eq!(dynamic.get_value(Some("-1")).unwrap(), Some(Value::Int(-1)));
+        assert_eq!(
+            dynamic.get_value(Some("unknown")).unwrap(),
+            Some(Value::String("unknown".into()))
+        );
+    }
+
+    #[test]
+    fn uint_multi_input_fields_validate_and_apply_defaults() {
+        let group = MultiInputField::new(
+            vec![
+                Field::Single {
+                    name: FieldName::new("label".into(), false, None, None, None),
+                    parser: Parser::String(),
+                    default_value: None,
+                },
+                Field::Single {
+                    name: FieldName::new("counter".into(), false, None, None, None),
+                    parser: Parser::UInt(),
+                    default_value: Some(u64::MAX.to_string()),
+                },
+            ],
+            FieldName::new("joined".into(), false, None, None, None),
+            MultiParser::Join(":".into(), false),
+        );
+        let mut record = Record::new();
+        let mut context = MultiInputContext::default();
+        group
+            .parse("label", Some("count"), &mut record, &mut context)
+            .unwrap();
+        group
+            .parse("counter", None, &mut record, &mut context)
+            .unwrap();
+        assert_eq!(
+            record.get("joined"),
+            Some(&Value::String("count:18446744073709551615".into()))
+        );
+        assert!(
+            group
+                .parse("counter", Some("-1"), &mut record, &mut context)
+                .is_err()
+        );
+    }
 
     #[test]
     fn to_json_array() {

@@ -373,19 +373,26 @@ impl FieldParserTree {
                                     }
                                 }
 
-                                let field_parser = FieldParser::new(
-                                    name.input_name().to_string(),
-                                    vec![field.clone()],
-                                );
-                                let fp_type = Box::new(ParserType::Field {
-                                    parser: field_parser,
-                                });
-                                parsers.insert(
-                                    name.input_name().to_string(),
-                                    ParserType::Array {
-                                        field: BoxedParserType(fp_type),
-                                    },
-                                );
+                                if let Some(ParserType::Array { field: existing }) =
+                                    parsers.get_mut(name.input_name())
+                                    && let ParserType::Field { parser } = existing.0.as_mut()
+                                {
+                                    parser.fields.push(field.clone());
+                                } else {
+                                    let field_parser = FieldParser::new(
+                                        name.input_name().to_string(),
+                                        vec![field.clone()],
+                                    );
+                                    let fp_type = Box::new(ParserType::Field {
+                                        parser: field_parser,
+                                    });
+                                    parsers.insert(
+                                        name.input_name().to_string(),
+                                        ParserType::Array {
+                                            field: BoxedParserType(fp_type),
+                                        },
+                                    );
+                                }
                             }
                             Field::Multi(_) => {
                                 let field_parser =

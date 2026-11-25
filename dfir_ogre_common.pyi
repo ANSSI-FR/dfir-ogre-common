@@ -849,7 +849,12 @@ class Parser:
 
     @classmethod
     def Int(cls) -> Parser:
-        """A parser that converts the input field to an integer value."""
+        """Parse a signed 64-bit integer; reject values outside -2**63..2**63-1."""
+        ...
+
+    @classmethod
+    def UInt(cls) -> Parser:
+        """Parse an unsigned decimal integer in 0..2**64-1 with checked bounds."""
         ...
 
     @classmethod

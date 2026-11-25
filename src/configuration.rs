@@ -692,6 +692,7 @@ fn get_parser(
     let parser = match parser_name {
         "Ignore" => Parser::Ignore(),
         "Int" => Parser::Int(),
+        "UInt" => Parser::UInt(),
         "Float" => Parser::Float(),
         "Bool" => Parser::Bool(),
         "String" => Parser::String(),
@@ -1057,6 +1058,30 @@ mod tests {
         );
 
         assert!(message.contains("default parser can be either"));
+    }
+
+    #[test]
+    fn uint_xml_mapping_supports_defaults_and_dynamic_parsers() {
+        let xml = r#"<plugin parser="Test"><mapping data_type="counter"><fields>
+            <field input="counter" output="value" parser="UInt" default_value="18446744073709551615" />
+            <field input="fallback" parser="Dynamic"><parser value="UInt"/><parser value="String"/></field>
+        </fields></mapping></plugin>"#;
+        let configuration = PluginConfiguration::from_str(xml, None, None).unwrap();
+        let mut tree = configuration.get_parsers(None).unwrap();
+        let mut record = crate::Record::new();
+        tree.get_parser("counter")
+            .unwrap()
+            .parse(None, &mut record)
+            .unwrap();
+        tree.get_parser("fallback")
+            .unwrap()
+            .parse(Some("n/a"), &mut record)
+            .unwrap();
+        assert_eq!(record.get("value"), Some(&crate::Value::UInt(u64::MAX)));
+        assert_eq!(
+            record.get("fallback"),
+            Some(&crate::Value::String("n/a".into()))
+        );
     }
 
     #[test]

@@ -4,7 +4,10 @@ use std::{fs::File, path::Path};
 use crate::field_mapping::ParserType;
 use crate::{
     Error, FieldParser, FieldParserTree, Metadata, Output, Parser, Record, RunConfiguration,
-    RunReport, Value, configuration::PluginConfiguration, field::MultiInputContext, parser::runner,
+    RunReport, Value,
+    configuration::PluginConfiguration,
+    field::{Field, MultiInputContext},
+    parser::runner,
 };
 
 use pyo3::prelude::*;
@@ -169,16 +172,82 @@ fn parse(
     output.write(record)
 }
 
-fn parse_mapped_string_field(
+fn field_uses_integer_parser(field: &Field, input_name: &str) -> bool {
+    match field {
+        Field::Single { parser, .. } => parser.requires_checked_integer(),
+        Field::Array(field) => field_uses_integer_parser(&field.0, input_name),
+        Field::Multi(group) => group.input_fields.iter().any(|field| {
+            field.input_names().iter().any(|name| name == input_name)
+                && field_uses_integer_parser(field, input_name)
+        }),
+        Field::Object { .. } => false,
+    }
+}
+
+fn parse_mapped_field(
     input_name: &str,
-    value: &str,
+    value: &JsonValue,
     parser_tree: &FieldParserTree,
+    parse_unknown: bool,
     record: &mut Record,
     multi_input_context: &mut MultiInputContext,
 ) -> Result<bool, Error> {
     match parser_tree.parsers.get(input_name) {
         Some(ParserType::Field { parser }) => {
-            parser.parse_with_context(Some(value), record, multi_input_context)?;
+            if let JsonValue::String(value) = value {
+                parser.parse_with_context(Some(value), record, multi_input_context)?;
+                return Ok(true);
+            }
+            if !value.is_null()
+                && parser
+                    .fields
+                    .iter()
+                    .any(|field| field_uses_integer_parser(field, input_name))
+            {
+                parser.parse_with_context(Some(&value.to_string()), record, multi_input_context)?;
+                return Ok(true);
+            }
+            Ok(false)
+        }
+        Some(ParserType::Array { field }) => {
+            let (ParserType::Field { parser }, JsonValue::Array(values)) =
+                (field.0.as_ref(), value)
+            else {
+                return Ok(false);
+            };
+            if parser.fields.len() == 1
+                && !parser
+                    .fields
+                    .iter()
+                    .any(|field| field_uses_integer_parser(field, input_name))
+            {
+                return Ok(false);
+            }
+            for field in &parser.fields {
+                let mut parsed = Vec::with_capacity(values.len());
+                for value in values {
+                    let item = match value {
+                        JsonValue::Null => Some(Value::Null()),
+                        JsonValue::String(value) => field.get_value(Some(value))?,
+                        value if field_uses_integer_parser(field, input_name) => {
+                            field.get_value(Some(&value.to_string())).map_err(|error| {
+                                Error::ParseField(input_name.to_owned(), error.to_string())
+                            })?
+                        }
+                        value => get_values(
+                            input_name,
+                            value.clone(),
+                            Some(parser_tree),
+                            parse_unknown,
+                            multi_input_context,
+                        )?,
+                    };
+                    if let Some(item) = item {
+                        parsed.push(item);
+                    }
+                }
+                field.set_value(Value::Array(parsed), record)?;
+            }
             Ok(true)
         }
         _ => Ok(false),
@@ -212,9 +281,14 @@ pub fn parse_json_object(
                     continue;
                 }
 
-                if let JsonValue::String(value) = &json_value
-                    && parse_mapped_string_field(&name, value, p_tree, record, multi_input_context)?
-                {
+                if parse_mapped_field(
+                    &name,
+                    &json_value,
+                    p_tree,
+                    parse_unknown,
+                    record,
+                    multi_input_context,
+                )? {
                     continue;
                 }
 
@@ -429,6 +503,185 @@ mod tests {
             }],
             None,
         )
+    }
+
+    fn parse_integer_mapping(input: &str, fields: &str) -> Result<Record, Error> {
+        let xml = format!(
+            r#"<plugin parser="Json"><mapping data_type="integers"><fields>{fields}</fields></mapping></plugin>"#
+        );
+        let configuration = PluginConfiguration::from_str(&xml, None, None).unwrap();
+        let tree = configuration.get_parsers(None).unwrap();
+        let json: JsonValue = serde_json::from_str(input).unwrap();
+        let mut record = Record::new();
+        parse_json_object(
+            json.as_object().unwrap().clone(),
+            Some(&tree),
+            true,
+            &mut record,
+            &mut MultiInputContext::new(tree.multi_input_group_count),
+        )?;
+        Ok(record)
+    }
+
+    #[test]
+    fn uint_json_scalar_mapping_checks_native_values() {
+        let fields = r#"<field input="counter" parser="UInt"/>"#;
+        for value in [
+            "0",
+            "42",
+            "9223372036854775808",
+            "18446744073709551615",
+            r#""18446744073709551615""#,
+        ] {
+            let record =
+                parse_integer_mapping(&format!(r#"{{"counter":{value}}}"#), fields).unwrap();
+            let expected = value.trim_matches('"').parse::<u64>().unwrap();
+            assert_eq!(record.get("counter"), Some(&Value::UInt(expected)));
+        }
+        for value in [
+            "-1",
+            "1.5",
+            "1e3",
+            "true",
+            "[]",
+            r#"{"nested":1}"#,
+            "18446744073709551616",
+        ] {
+            assert!(
+                parse_integer_mapping(&format!(r#"{{"counter":{value}}}"#), fields).is_err(),
+                "accepted {value}"
+            );
+        }
+        let record = parse_integer_mapping(r#"{"counter":null}"#, fields).unwrap();
+        assert_eq!(record.get("counter"), Some(&Value::Null()));
+    }
+
+    #[test]
+    fn uint_json_array_mapping_checks_each_element() {
+        let fields = r#"<array><field input="counters" parser="UInt"/></array>"#;
+        let record = parse_integer_mapping(
+            r#"{"counters":[0,"18446744073709551615",9223372036854775808,null]}"#,
+            fields,
+        )
+        .unwrap();
+        assert_eq!(
+            record.get("counters"),
+            Some(&Value::Array(vec![
+                Value::UInt(0),
+                Value::UInt(u64::MAX),
+                Value::UInt(9_223_372_036_854_775_808),
+                Value::Null()
+            ]))
+        );
+        for input in [
+            r#"{"counters":[-1]}"#,
+            r#"{"counters":[1.5]}"#,
+            r#"{"counters":[true]}"#,
+            r#"{"counters":[{"nested":1}]}"#,
+        ] {
+            let error = parse_integer_mapping(input, fields).unwrap_err();
+            assert!(error.to_string().contains("counters"), "{error}");
+        }
+    }
+
+    #[test]
+    fn uint_and_int_json_mappings_validate_all_aliases() {
+        let fields = r#"<field input="value" output="unsigned" parser="UInt"/><field input="value" output="signed" parser="Int"/>"#;
+        let record = parse_integer_mapping(r#"{"value":42}"#, fields).unwrap();
+        assert_eq!(record.get("unsigned"), Some(&Value::UInt(42)));
+        assert_eq!(record.get("signed"), Some(&Value::Int(42)));
+        assert!(parse_integer_mapping(r#"{"value":18446744073709551615}"#, fields).is_err());
+        let arrays = r#"<array><field input="values" output="unsigned" parser="UInt"/></array><array><field input="values" output="signed" parser="Int"/></array>"#;
+        let record = parse_integer_mapping(r#"{"values":[42]}"#, arrays).unwrap();
+        assert_eq!(
+            record.get("unsigned"),
+            Some(&Value::Array(vec![Value::UInt(42)]))
+        );
+        assert_eq!(
+            record.get("signed"),
+            Some(&Value::Array(vec![Value::Int(42)]))
+        );
+        assert!(parse_integer_mapping(r#"{"values":[18446744073709551615]}"#, arrays).is_err());
+    }
+
+    #[test]
+    fn json_array_aliases_keep_their_individual_string_parsers() {
+        let fields = r#"<array><field input="values" output="upper" parser="StringToUpper"/></array><array><field input="values" output="lower" parser="StringToLower"/></array>"#;
+        let record = parse_integer_mapping(r#"{"values":["AbC"]}"#, fields).unwrap();
+        assert_eq!(
+            record.get("upper"),
+            Some(&Value::Array(vec![Value::String("ABC".into())]))
+        );
+        assert_eq!(
+            record.get("lower"),
+            Some(&Value::Array(vec![Value::String("abc".into())]))
+        );
+    }
+
+    #[test]
+    fn uint_dynamic_json_mappings_use_the_declared_fallback() {
+        let fields = r#"<field input="value" parser="Dynamic"><parser value="UInt"/><parser value="String"/></field>"#;
+        let record = parse_integer_mapping(r#"{"value":-1}"#, fields).unwrap();
+        assert_eq!(record.get("value"), Some(&Value::String("-1".into())));
+        let record = parse_integer_mapping(r#"{"value":18446744073709551615}"#, fields).unwrap();
+        assert_eq!(record.get("value"), Some(&Value::UInt(u64::MAX)));
+        let signed = r#"<field input="value" parser="Int"/>"#;
+        assert!(parse_integer_mapping(r#"{"value":18446744073709551615}"#, signed).is_err());
+    }
+
+    #[test]
+    fn uint_jsonl_reports_bad_records_and_continues() {
+        let folder = test_folder("uint_jsonl_checked");
+        let input = folder.join("input.jsonl");
+        fs::write(
+            &input,
+            concat!(
+                "{\"counter\":18446744073709551615}\n",
+                "{\"counter\":-1}\n",
+                "{\"counter\":0}\n",
+            ),
+        )
+        .unwrap();
+        let configuration = PluginConfiguration::from_str(
+            r#"<plugin parser="Jsonl"><mapping data_type="counter"><fields><field input="counter" parser="UInt"/></fields></mapping></plugin>"#,
+            None, None,
+        ).unwrap();
+        let report = parse_jsonl(
+            input.to_str().unwrap(),
+            RunConfiguration::new(vec![output_conf("checked", &folder)], true, None),
+            configuration,
+            Metadata::new("test".into()),
+        );
+        assert_eq!(report.num_errors, 1);
+        let error = report.last_error.as_deref().unwrap();
+        assert!(
+            error.contains("Line 2:") && error.contains("counter"),
+            "{error}"
+        );
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 2);
+        let output = fs::read_to_string(folder.join("checked.counter.jsonl")).unwrap();
+        let rows: Vec<JsonValue> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows[0]["counter"].as_u64(), Some(u64::MAX));
+        assert_eq!(rows[1]["counter"].as_u64(), Some(0));
+        remove_dir_if_exists(&folder);
+    }
+
+    #[test]
+    fn uint_native_json_mapping_supports_multi_input_fields() {
+        let fields = r#"<multi_input output="joined" parser="Join" separator=":"><field input="label" parser="String"/><field input="counter" parser="UInt"/></multi_input>"#;
+        let record = parse_integer_mapping(
+            r#"{"label":"count","counter":18446744073709551615}"#,
+            fields,
+        )
+        .unwrap();
+        assert_eq!(
+            record.get("joined"),
+            Some(&Value::String("count:18446744073709551615".into()))
+        );
+        assert!(parse_integer_mapping(r#"{"label":"count","counter":-1}"#, fields).is_err());
     }
 
     #[test]
