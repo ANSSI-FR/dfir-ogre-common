@@ -105,6 +105,40 @@ pub fn win_ntfs_flag_parser() -> ParserExtension {
     ParserExtension(Arc::new(FileAttributesParser::new()))
 }
 
+/// ORC letters and the corresponding Windows FILE_ATTRIBUTE bits. Names are
+/// shared by NTFSInfo and the raw MFT parser. EA and RECALL_ON_OPEN alias the
+/// same on-disk bit; a raw MFT cannot distinguish their intended meaning.
+pub(crate) const NTFS_FILE_ATTRIBUTES: [(char, u32, &str); 22] = [
+    ('A', 0x00000020, "file_attributes_archive"),
+    ('B', 0x00020000, "file_attributes_no_scrub_data"),
+    ('C', 0x00000800, "file_attributes_compressed"),
+    ('D', 0x00000010, "file_attributes_directory"),
+    ('E', 0x00004000, "file_attributes_encrypted"),
+    ('H', 0x00000002, "file_attributes_hidden"),
+    ('I', 0x00002000, "file_attributes_not_content_indexed"),
+    ('L', 0x00000400, "file_attributes_reparse_point"),
+    ('N', 0x00000080, "file_attributes_normal"),
+    ('O', 0x00001000, "file_attributes_offline"),
+    ('P', 0x00000200, "file_attributes_sparse_file"),
+    ('R', 0x00000001, "file_attributes_readonly"),
+    ('S', 0x00000004, "file_attributes_system"),
+    ('T', 0x00000100, "file_attributes_temporary"),
+    ('V', 0x00010000, "file_attributes_virtual"),
+    ('a', 0x00400000, "file_attributes_recall_on_data_access"),
+    ('d', 0x00000040, "file_attributes_device"),
+    ('e', 0x00040000, "file_attributes_ea"),
+    ('o', 0x00040000, "file_attributes_recall_on_open"),
+    ('p', 0x00080000, "file_attributes_pinned"),
+    ('s', 0x00008000, "file_attributes_integrity_stream"),
+    ('u', 0x00100000, "file_attributes_unpinned"),
+];
+
+pub(crate) fn ntfs_attribute_values(flags: u32) -> impl Iterator<Item = (String, Value)> {
+    NTFS_FILE_ATTRIBUTES
+        .iter()
+        .map(move |(_, bit, name)| ((*name).to_string(), Value::Bool(flags & bit != 0)))
+}
+
 pub struct FileAttributesParser {
     default_field: FieldName,
     file_attributes: IndexMap<char, FieldName>,
@@ -115,222 +149,15 @@ impl FileAttributesParser {
     fn new() -> Self {
         let default_field =
             FieldName::new("file_attribute_raw".to_string(), false, None, None, None);
-        let mut file_attributes = IndexMap::new();
-        file_attributes.insert(
-            'A',
-            FieldName::new(
-                "file_attributes_archive".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'B',
-            FieldName::new(
-                "file_attributes_no_scrub_data".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'C',
-            FieldName::new(
-                "file_attributes_compressed".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'D',
-            FieldName::new(
-                "file_attributes_directory".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'E',
-            FieldName::new(
-                "file_attributes_encrypted".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'H',
-            FieldName::new(
-                "file_attributes_hidden".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'I',
-            FieldName::new(
-                "file_attributes_not_content_indexed".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'L',
-            FieldName::new(
-                "file_attributes_reparse_point".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'N',
-            FieldName::new(
-                "file_attributes_normal".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-
-        file_attributes.insert(
-            'O',
-            FieldName::new(
-                "file_attributes_offline".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'P',
-            FieldName::new(
-                "file_attributes_sparse_file".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'R',
-            FieldName::new(
-                "file_attributes_readonly".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'S',
-            FieldName::new(
-                "file_attributes_system".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'T',
-            FieldName::new(
-                "file_attributes_temporary".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'V',
-            FieldName::new(
-                "file_attributes_virtual".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'a',
-            FieldName::new(
-                "file_attributes_recall_on_data_access".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'd',
-            FieldName::new(
-                "file_attributes_device".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'e',
-            FieldName::new("file_attributes_ea".to_string(), false, None, None, None),
-        );
-        file_attributes.insert(
-            'o',
-            FieldName::new(
-                "file_attributes_recall_on_open".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'p',
-            FieldName::new(
-                "file_attributes_pinned".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            's',
-            FieldName::new(
-                "file_attributes_integrity_stream".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
-        file_attributes.insert(
-            'u',
-            FieldName::new(
-                "file_attributes_unpinned".to_string(),
-                false,
-                None,
-                None,
-                None,
-            ),
-        );
+        let file_attributes: IndexMap<char, FieldName> = NTFS_FILE_ATTRIBUTES
+            .iter()
+            .map(|(letter, _, name)| {
+                (
+                    *letter,
+                    FieldName::new((*name).to_string(), false, None, None, None),
+                )
+            })
+            .collect();
 
         let mut data = IndexMap::with_capacity(file_attributes.len());
         let mut field_names = Vec::with_capacity(file_attributes.len() + 1);
@@ -462,6 +289,16 @@ mod tests {
                     Value::String(input.to_owned())
                 )]
             );
+        }
+    }
+    #[test]
+    fn raw_ntfs_attributes_match_the_existing_orc_letter_fields() {
+        let parser = FileAttributesParser::new();
+        let raw: Vec<_> = ntfs_attribute_values(0x0000_0022).collect();
+        assert_eq!(raw, parser.parse("AH", "Attributes").unwrap());
+        let raw: Vec<_> = ntfs_attribute_values(0x0004_0000).collect();
+        for name in ["file_attributes_ea", "file_attributes_recall_on_open"] {
+            assert!(raw.contains(&(name.to_string(), Value::Bool(true))));
         }
     }
 }

@@ -49,6 +49,7 @@ pub use output::Output;
 pub use parser::csv::parse_csv;
 pub use parser::evtx::parse_evtx;
 pub use parser::hive::parse_hive_keys;
+pub use parser::mft::parse_mft;
 pub use parser::regexp::parse_regexp;
 pub use parser::sqlite::parse_sqlite;
 pub use parser::windows_parsers::win_frn_hex_parser;

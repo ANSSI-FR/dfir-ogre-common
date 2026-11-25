@@ -761,6 +761,19 @@ def parse_jsonl(
     """
     ...
 
+def parse_mft(
+    input_file: str,
+    run_config: RunConfiguration,
+    plugin_config: PluginConfiguration,
+    metadata: Metadata,
+) -> RunReport:
+    """Parse a standalone raw $MFT, one row per long filename/hard link.
+
+    Uses ntfs-core without the volume or journal. Shared fields follow NTFSInfo;
+    malformed records are reported while later valid records remain available.
+    """
+    ...
+
 def parse_regexp(
     input_file: str,
     run_config: RunConfiguration,

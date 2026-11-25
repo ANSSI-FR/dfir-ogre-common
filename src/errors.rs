@@ -11,6 +11,12 @@ impl std::convert::From<Error> for PyErr {
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("Invalid MFT: {0}")]
+    Mft(String),
+
+    #[error(transparent)]
+    Ntfs(#[from] ntfs_core::NtfsError),
+
     #[error(transparent)]
     Csv(#[from] csv::Error),
 

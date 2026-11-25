@@ -13,6 +13,7 @@ use crate::{
         evtx::parse_evtx,
         hive::parse_hive_values,
         json::{parse_json, parse_jsonl},
+        mft::parse_mft,
         windows_parsers::{
             win_frn_hex_parser, win_frn_int_parser, win_ntfs_flag_parser, win_signed_hash_parser,
         },
@@ -130,6 +131,7 @@ pub fn dfir_ogre_common(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_hive_keys, m)?)?;
     m.add_function(wrap_pyfunction!(parse_json, m)?)?;
     m.add_function(wrap_pyfunction!(parse_jsonl, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_mft, m)?)?;
     m.add_function(wrap_pyfunction!(parse_hive_values, m)?)?;
     m.add_function(wrap_pyfunction!(parse_regexp, m)?)?;
     m.add_function(wrap_pyfunction!(parse_sqlite, m)?)?;
