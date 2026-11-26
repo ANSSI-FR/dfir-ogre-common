@@ -12,6 +12,7 @@ use std::path::Path;
 
 use super::windows_parsers::ntfs_attribute_values;
 use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
 use ntfs_core::{
     AttributeBody, AttributeListEntry, FileName, FileReference, MftRecordHeader,
     StandardInformation, apply_fixup, parse_attributes,
@@ -779,13 +780,22 @@ fn build_rows(record: &MftRecord, index: &mut MftIndex) -> Vec<Record> {
         return Vec::new();
     }
     let data_size = record.data_size();
-    let ads = record
-        .data
-        .iter()
-        .filter(|stream| !stream.name.is_empty() && stream.start_vcn == 0)
-        .map(|stream| format!("{}:{}", stream.name, stream.size))
-        .collect::<Vec<_>>()
-        .join(";");
+    let mut streams = IndexMap::new();
+    for stream in record.data.iter().filter(|stream| !stream.name.is_empty()) {
+        let size = streams.entry(&stream.name).or_insert(None);
+        if stream.start_vcn == 0 {
+            *size = Some(stream.size);
+        }
+    }
+    let ads = streams
+        .into_iter()
+        .map(|(name, size)| {
+            let mut stream = Record::new();
+            stream.add("name", Value::String(name.clone()));
+            stream.add("size", size.map(Value::UInt).unwrap_or(Value::Null()));
+            Value::Object(stream)
+        })
+        .collect::<Vec<_>>();
 
     let long_names: Vec<&FileNameAttr> = file_names
         .iter()
@@ -859,9 +869,7 @@ fn build_rows(record: &MftRecord, index: &mut MftIndex) -> Vec<Record> {
         if aliases.len() == 1 && long_count <= 1 {
             row.add("short_name", Value::String(aliases[0].name.clone()));
         }
-        if !ads.is_empty() {
-            row.add("ads", Value::String(ads.clone()));
-        }
+        row.add("ads", Value::Array(ads.clone()));
 
         let flags = info.map_or(file_name.flags, |info| info.flags);
         row.extend(ntfs_attribute_values(flags));
@@ -1116,6 +1124,86 @@ mod tests {
             .unwrap_or_else(|| panic!("missing field {name}"))
     }
 
+    fn ads_json(row: &Record) -> serde_json::Value {
+        let mut json = String::new();
+        Value::json_serialise_value(
+            get(row, "ads"),
+            &mut json,
+            &crate::DateOutputCodec::Iso(),
+            true,
+        )
+        .unwrap();
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn ads_preserve_stream_names_and_zero_sizes() {
+        let mut raw = record(
+            7,
+            &[
+                file_name(5, 5, "streams.txt", 1, 0),
+                data(3, ""),
+                data(5, "Zone.Identifier"),
+                data(0, "custom;\"stream"),
+            ],
+            1,
+            1,
+            0,
+        );
+        let record = parse_record(&mut raw, 7).unwrap();
+        let rows = build_rows(&record, &mut MftIndex::default());
+        assert_eq!(
+            ads_json(&rows[0]),
+            serde_json::json!([
+                {"name": "Zone.Identifier", "size": 5},
+                {"name": "custom;\"stream", "size": 0},
+            ])
+        );
+    }
+
+    #[test]
+    fn ads_are_empty_arrays_without_named_streams() {
+        assert_eq!(ads_json(&rows_of(6)[0]), serde_json::json!([]));
+    }
+
+    #[test]
+    fn ads_preserve_unknown_sizes_and_full_width_sizes_once_per_stream() {
+        let (mut index, records) = index_and_records();
+        let mut record = records
+            .iter()
+            .find(|r| r.record_number == 7)
+            .unwrap()
+            .clone();
+        record.data = vec![
+            DataStream {
+                attribute_id: 0,
+                start_vcn: 2,
+                name: "partial".into(),
+                size: 999,
+            },
+            DataStream {
+                attribute_id: 1,
+                start_vcn: 4,
+                name: "complete".into(),
+                size: 777,
+            },
+            DataStream {
+                attribute_id: 2,
+                start_vcn: 0,
+                name: "complete".into(),
+                size: u64::MAX,
+            },
+        ];
+        assert_eq!(
+            ads_json(&build_rows(&record, &mut index)[0]),
+            serde_json::json!([
+                {"name": "partial", "size": null},
+                {"name": "complete", "size": u64::MAX},
+            ])
+        );
+        assert_eq!(index.reference_errors(&record).len(), 1);
+    }
+
     #[test]
     fn detects_record_size_and_rejects_other_files() {
         assert_eq!(
@@ -1179,7 +1267,10 @@ mod tests {
         assert_eq!(get(row, "extension"), &Value::String(".exe".into()));
         assert_eq!(get(row, "file_size"), &Value::Int(300));
         assert_eq!(get(row, "short_name"), &Value::String("EVIL~1.EXE".into()));
-        assert_eq!(get(row, "ads"), &Value::String("Zone.Identifier:5".into()));
+        assert_eq!(
+            ads_json(row),
+            serde_json::json!([{"name": "Zone.Identifier", "size": 5}])
+        );
         assert_eq!(get(row, "usn_number"), &Value::Int(1234));
         assert_eq!(get(row, "file_attributes_hidden"), &Value::Bool(true));
         assert_eq!(get(row, "file_attributes_directory"), &Value::Bool(false));
@@ -1510,7 +1601,7 @@ mod tests {
         index.finish();
         let rows = build_rows(&base, &mut index);
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].get("ads"), None);
+        assert_eq!(ads_json(&rows[0]), serde_json::json!([]));
         assert_eq!(get(&rows[0], "file_size"), &Value::Int(0));
     }
 
