@@ -12,6 +12,19 @@ use serde_json::Value as JsonValue;
 
 const TIMESTAMP_FIELD: &str = "timestamp";
 
+fn evtx_error_message(error: &evtx::err::EvtxError) -> String {
+    use std::error::Error as _;
+
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
+}
+
 #[pyfunction]
 pub fn parse_evtx(
     input_file: &str,
@@ -23,7 +36,11 @@ pub fn parse_evtx(
         Ok(run_report) => run_report,
         Err(e) => {
             let mut run_report = RunReport::new();
-            run_report.add_error(e.to_string());
+            let message = match &e {
+                Error::Evtx(error) => evtx_error_message(error),
+                _ => e.to_string(),
+            };
+            run_report.add_error(message);
             run_report
         }
     }
@@ -66,7 +83,10 @@ pub fn parse(
 
                     parse_record(rec, &mut tuple, output, &parser_tree, report);
                 }
-                Err(e) => report.add_error(format!("{e}, Event number: {evt_number}")),
+                Err(e) => report.add_error(format!(
+                    "{}, Event number: {evt_number}",
+                    evtx_error_message(&e)
+                )),
             };
             tuple.clear();
         }
@@ -152,6 +172,83 @@ mod tests {
         remove_dir_if_exists(&path);
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    fn evtx_error_report(input: &Path, folder: &Path) -> RunReport {
+        let output = OutputConfiguration::new(
+            "events".into(),
+            folder.display().to_string(),
+            "file".into(),
+            "jsonl".into(),
+            "iso".into(),
+            false,
+            true,
+            HashMap::new(),
+        );
+        let plugin = PluginConfiguration::from_str(
+            &fs::read_to_string("test_data/evtx/evtx.xml").unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+        parse_evtx(
+            input.to_str().unwrap(),
+            RunConfiguration::new(vec![output], true, None),
+            plugin,
+            Metadata::new("evtx-error-test".into()),
+        )
+    }
+
+    #[test]
+    fn evtx_error_includes_decoder_cause_and_preserves_readable_events() {
+        let folder = test_folder("evtx_decoder_error_causes");
+        let mut data = fs::read("test_data/evtx/kernel_pnp.evtx").unwrap();
+        let header = evtx::EvtxFileHeader::from_bytes(&data).unwrap();
+        let chunk_start =
+            header.header_block_size as usize + header.last_chunk_number as usize * 65_536;
+        let chunk = evtx::EvtxChunkHeader::from_bytes(&data[chunk_start..]).unwrap();
+        assert_eq!(chunk.last_event_record_id, 123);
+        // Alter only the last record's first BinXML token, leaving earlier
+        // records and the chunk's shared strings/templates intact.
+        data[chunk_start + chunk.last_event_record_data_offset as usize + 24] = 0xff;
+        let input = folder.join("corrupt.evtx");
+        fs::write(&input, data).unwrap();
+
+        let report = evtx_error_report(&input, &folder);
+
+        assert_eq!(report.num_errors, 1);
+        let message = report.last_error.as_deref().unwrap();
+        assert!(
+            message.contains("Failed to parse record number 123"),
+            "{message}"
+        );
+        assert!(message.contains("0xff"), "{message}");
+        assert!(message.contains("Event number: 123"), "{message}");
+        assert_eq!(report.output_reports[0].file_reports[0].num_lines, 122);
+        assert_eq!(
+            fs::read_to_string(folder.join("events.evtx.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            122,
+        );
+        remove_dir_if_exists(&folder);
+    }
+
+    #[test]
+    fn evtx_error_includes_input_file_cause_once() {
+        let folder = test_folder("evtx_input_error_causes");
+        let input = folder.join("missing.evtx");
+        let io_cause = fs::File::open(&input).unwrap_err().to_string();
+
+        let report = evtx_error_report(&input, &folder);
+
+        assert_eq!(report.num_errors, 1);
+        assert!(report.output_reports.is_empty());
+        let message = report.last_error.as_deref().unwrap();
+        assert!(message.contains("missing.evtx"), "{message}");
+        assert!(message.contains(&io_cause), "{message}");
+        remove_dir_if_exists(&folder);
     }
 
     #[test]
